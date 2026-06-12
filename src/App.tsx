@@ -10,6 +10,7 @@ import VideoMonitor from './pages/VideoMonitor'
 import Schedule from './pages/Schedule'
 import CaseManagement from './pages/CaseManagement'
 import Statistics from './pages/Statistics'
+import JointReview from './pages/JointReview'
 import { usePoliceStore } from './store/policeStore'
 
 export default function App() {
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="schedule" element={<Schedule />} />
         <Route path="cases" element={<CaseManagement />} />
         <Route path="statistics" element={<Statistics />} />
+        <Route path="joint-review" element={<JointReview />} />
       </Route>
     </Routes>
   )

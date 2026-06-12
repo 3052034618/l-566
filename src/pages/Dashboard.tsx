@@ -1,13 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   Card, Row, Col, Tag, Space, Button, List, Badge, Avatar, Statistic,
-  Progress, Empty, Tooltip, Drawer, Descriptions, message
+  Progress, Empty, Tooltip, Drawer, Descriptions, message, Steps, Alert
 } from 'antd'
 import {
   SafetyOutlined, AlertOutlined, SafetyCertificateOutlined,
   CarOutlined, UserOutlined, BellOutlined, VideoCameraOutlined,
   WarningOutlined, EnvironmentOutlined, ThunderboltOutlined,
-  FileTextOutlined
+  FileTextOutlined, TeamOutlined, ClockCircleOutlined, CheckCircleOutlined,
+  ArrowRightOutlined
 } from '@ant-design/icons'
 import { usePoliceStore } from '../store/policeStore'
 import { INCIDENT_TYPE_LABELS, INCIDENT_STATUS_LABELS, PRIORITY_LABELS, CASE_STATUS_LABELS } from '../data/mockData'
@@ -60,6 +61,45 @@ export default function Dashboard() {
   const pendingIncidents = incidents.filter(i => i.status === 'pending')
   const unreadAlerts = alerts.filter(a => !a.read)
   const alertCameras = cameras.filter(c => c.hasAlert)
+
+  const activeJointOps = useMemo(() => {
+    return incidents
+      .filter(i => i.isJointOperation && i.status !== 'closed')
+      .map(i => {
+        const nodes = i.disposalNodes || []
+        const currentNodeIdx = nodes.findIndex(n => n.status === 'in_progress')
+        const currentNode = currentNodeIdx >= 0 ? nodes[currentNodeIdx] : null
+        const nextNode = currentNodeIdx >= 0 && currentNodeIdx < nodes.length - 1
+          ? nodes[currentNodeIdx + 1]
+          : (currentNodeIdx === -1 && nodes.length > 0 ? nodes.find(n => n.status === 'pending') : null)
+
+        const overdueNodes = nodes.filter(n => {
+          if (!n.startedAt || !n.expectedDurationMin) return false
+          if (n.status === 'completed') return false
+          const elapsed = dayjs().diff(dayjs(n.startedAt), 'minute')
+          return elapsed > n.expectedDurationMin
+        })
+
+        const pendingReinforcement = (i.jointUnits || []).filter(u => !u.arrivedAt && u.role === 'reinforcement')
+
+        const currentNodeElapsed = currentNode?.startedAt
+          ? dayjs().diff(dayjs(currentNode.startedAt), 'minute')
+          : 0
+        const isCurrentNodeOverdue = !!(currentNode?.startedAt && currentNode?.expectedDurationMin &&
+          currentNodeElapsed > currentNode.expectedDurationMin)
+
+        return {
+          incident: i,
+          currentNode,
+          nextNode,
+          overdueNodes,
+          pendingReinforcement,
+          currentNodeElapsed,
+          isCurrentNodeOverdue,
+          nodeProgress: nodes.filter(n => n.status === 'completed').length
+        }
+      })
+  }, [incidents, tick])
 
   const typeColor = (t: string) => t === 'criminal' ? 'red' : t === 'public_order' ? 'orange' : 'green'
   const typeIcon = (t: string) =>
@@ -227,6 +267,154 @@ export default function Dashboard() {
               valueStyle={{ color: '#fff' }}
             />
           </div>
+        </Col>
+      </Row>
+
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24}>
+          <Card
+            title={
+              <Space>
+                <TeamOutlined style={{ color: '#cf1322', fontSize: 18 }} />
+                <span style={{ fontWeight: 600 }}>重大警情联合处置中</span>
+                <Tag color="red" style={{ marginLeft: 8 }}>{activeJointOps.length} 件正在处置</Tag>
+              </Space>
+            }
+            extra={
+              activeJointOps.length > 0 && (
+                <Button type="link" size="small" onClick={() => navigate('/joint-review')}>
+                  查看全部复盘 →
+                </Button>
+              )
+            }
+          >
+            {activeJointOps.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={<span style={{ color: '#999' }}>暂无进行中的联合处置警情</span>}
+              />
+            ) : (
+              <Row gutter={[16, 16]}>
+                {activeJointOps.slice(0, 4).map(op => (
+                  <Col xs={24} sm={12} xl={6} key={op.incident.id}>
+                    <Card
+                      size="small"
+                      hoverable
+                      onClick={() => navigate('/incidents')}
+                      style={{
+                        cursor: 'pointer',
+                        borderTop: `3px solid ${op.isCurrentNodeOverdue ? '#cf1322' : '#1677ff'}`,
+                        background: op.isCurrentNodeOverdue ? '#fff1f0' : '#fff'
+                      }}
+                      title={
+                        <Space size={4}>
+                          <Tag color="red">P{op.incident.priority}</Tag>
+                          <Tooltip title={op.incident.location}>
+                            <span style={{
+                              fontSize: 14, fontWeight: 600,
+                              maxWidth: 150, overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              display: 'inline-block', verticalAlign: 'bottom'
+                            }}>
+                              {op.incident.location}
+                            </span>
+                          </Tooltip>
+                        </Space>
+                      }
+                      extra={
+                        <Button type="link" size="small" icon={<ArrowRightOutlined />} />
+                      }
+                    >
+                      <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                        <div style={{ fontSize: 12, color: '#666' }}>
+                          <Space>
+                            <span>👮 主责 {op.incident.jointUnits?.filter(u => u.role === 'primary').length || 0}</span>
+                            <span>🚓 增援 {op.incident.jointUnits?.filter(u => u.role === 'reinforcement').length || 0}</span>
+                          </Space>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>
+                            当前节点
+                          </div>
+                          {op.currentNode ? (
+                            <div style={{
+                              padding: '6px 8px', borderRadius: 4, fontSize: 12,
+                              background: op.isCurrentNodeOverdue ? '#fff1f0' : '#e6f4ff',
+                              borderLeft: `3px solid ${op.isCurrentNodeOverdue ? '#cf1322' : '#1677ff'}`
+                            }}>
+                              <Space direction="vertical" size={0}>
+                                <Space>
+                                  <ClockCircleOutlined style={{ color: op.isCurrentNodeOverdue ? '#cf1322' : '#1677ff' }} />
+                                  <strong>{op.currentNode.name}</strong>
+                                  {op.isCurrentNodeOverdue && <Tag color="red" style={{ margin: 0 }}>超时</Tag>}
+                                </Space>
+                                <span style={{ color: '#666' }}>
+                                  已进行 {op.currentNodeElapsed} 分钟
+                                  {op.currentNode.expectedDurationMin &&
+                                    ` / 预期 ${op.currentNode.expectedDurationMin} 分钟`}
+                                </span>
+                              </Space>
+                            </div>
+                          ) : (
+                            <Tag>暂未开始</Tag>
+                          )}
+                        </div>
+
+                        {(op.pendingReinforcement.length > 0 || op.overdueNodes.length > 0) && (
+                          <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                            {op.pendingReinforcement.length > 0 && (
+                              <Alert
+                                type="warning"
+                                showIcon
+                                style={{ fontSize: 11, padding: '4px 8px', margin: 0 }}
+                                message={
+                                  <span style={{ fontSize: 11 }}>
+                                    ⏳ {op.pendingReinforcement.length} 组增援未到场
+                                    ({op.pendingReinforcement.map(u => u.unitName).slice(0, 2).join('、')}
+                                    {op.pendingReinforcement.length > 2 && '...'})
+                                  </span>
+                                }
+                              />
+                            )}
+                            {op.overdueNodes.length > 1 && (
+                              <Alert
+                                type="error"
+                                showIcon
+                                style={{ fontSize: 11, padding: '4px 8px', margin: 0 }}
+                                message={
+                                  <span style={{ fontSize: 11 }}>
+                                    ⚠ {op.overdueNodes.length - (op.isCurrentNodeOverdue ? 1 : 0)} 个节点超时
+                                  </span>
+                                }
+                              />
+                            )}
+                          </Space>
+                        )}
+
+                        {op.nextNode && (
+                          <div style={{ fontSize: 11, color: '#888' }}>
+                            <Space>
+                              <span>下一步:</span>
+                              <Tag color="blue" style={{ margin: 0 }}>{op.nextNode.name}</Tag>
+                            </Space>
+                          </div>
+                        )}
+
+                        <div style={{ paddingTop: 4 }}>
+                          <Progress
+                            percent={Math.round((op.nodeProgress / (op.incident.disposalNodes?.length || 1)) * 100)}
+                            size="small"
+                            strokeColor={op.isCurrentNodeOverdue ? '#cf1322' : '#1677ff'}
+                          />
+                        </div>
+                      </Space>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            )}
+          </Card>
         </Col>
       </Row>
 

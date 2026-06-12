@@ -4,7 +4,8 @@ import {
   DashboardOutlined, FileAddOutlined, UnorderedListOutlined,
   ThunderboltOutlined, EyeOutlined, VideoCameraOutlined,
   CalendarOutlined, FolderOpenOutlined, BarChartOutlined,
-  BellOutlined, UserOutlined, LogoutOutlined, SettingOutlined
+  BellOutlined, UserOutlined, LogoutOutlined, SettingOutlined,
+  TeamOutlined
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { usePoliceStore } from '../store/policeStore'
@@ -21,7 +22,8 @@ const menuItems = [
   { key: '/video', icon: <VideoCameraOutlined />, label: '视频监控' },
   { key: '/schedule', icon: <CalendarOutlined />, label: '巡逻排班' },
   { key: '/cases', icon: <FolderOpenOutlined />, label: '案件管理' },
-  { key: '/statistics', icon: <BarChartOutlined />, label: '统计分析' }
+  { key: '/statistics', icon: <BarChartOutlined />, label: '统计分析' },
+  { key: '/joint-review', icon: <TeamOutlined />, label: '协同处置复盘' }
 ]
 
 export default function AppLayout() {

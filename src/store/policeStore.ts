@@ -48,6 +48,8 @@ interface PoliceStore {
   addAssignmentLog: (incidentId: string, log: Omit<AssignmentLog, 'id' | 'operatedAt'>) => void
   verifyTransfer: (incidentId: string, passed: boolean, comments?: string) => void
   addDisposalNode: (incidentId: string, nodeName: string) => void
+  markUnitArrived: (incidentId: string, unitId: string) => void
+  getActiveJointOperations: () => Incident[]
 
   addCase: (data: Omit<Case, 'id' | 'transcripts' | 'evidences' | 'isOverdue'>) => Case
   updateCaseStatus: (id: string, status: CaseStatus) => void
@@ -446,12 +448,12 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
     }
 
     const defaultNodes: DisposalNode[] = [
-      { id: uuidv4(), name: '接警响应', status: 'completed', completedAt: incident.reportedAt, completedBy: '指挥中心' },
-      { id: uuidv4(), name: '警力部署', status: 'in_progress', completedBy: '指挥长' },
-      { id: uuidv4(), name: '现场控制', status: 'pending' },
-      { id: uuidv4(), name: '调查取证', status: 'pending' },
-      { id: uuidv4(), name: '人员移交', status: 'pending' },
-      { id: uuidv4(), name: '现场清理', status: 'pending' }
+      { id: uuidv4(), name: '接警响应', status: 'completed', startedAt: incident.reportedAt, completedAt: incident.reportedAt, completedBy: '指挥中心', expectedDurationMin: 2 },
+      { id: uuidv4(), name: '警力部署', status: 'in_progress', startedAt: dayjs().format(), completedBy: '指挥长', expectedDurationMin: 5 },
+      { id: uuidv4(), name: '现场控制', status: 'pending', expectedDurationMin: 15 },
+      { id: uuidv4(), name: '调查取证', status: 'pending', expectedDurationMin: 30 },
+      { id: uuidv4(), name: '人员移交', status: 'pending', expectedDurationMin: 10 },
+      { id: uuidv4(), name: '现场清理', status: 'pending', expectedDurationMin: 8 }
     ]
 
     set(state => ({
@@ -509,6 +511,9 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
           disposalNodes: (i.disposalNodes || []).map(n => {
             if (n.id !== nodeId) return n
             const updated: DisposalNode = { ...n, status }
+            if (status === 'in_progress' && !n.startedAt) {
+              updated.startedAt = dayjs().format()
+            }
             if (status === 'completed') {
               updated.completedAt = dayjs().format()
               updated.completedBy = '指挥长'
@@ -529,7 +534,8 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         const newNode: DisposalNode = {
           id: uuidv4(),
           name: nodeName,
-          status: 'pending'
+          status: 'pending',
+          expectedDurationMin: 10
         }
         return {
           ...i,
@@ -542,11 +548,49 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
 
   updateOnSiteDivision: (incidentId, division) => {
     set(state => ({
-      incidents: state.incidents.map(i => i.id === incidentId ? {
-        ...i, onSiteDivision: division
-      } : i)
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        const history = i.onSiteDivisionHistory || []
+        if (i.onSiteDivision !== division) {
+          history.push({
+            id: uuidv4(),
+            changedAt: dayjs().format(),
+            changedBy: '指挥长',
+            beforeContent: i.onSiteDivision || '(无)',
+            afterContent: division
+          })
+        }
+        return {
+          ...i,
+          onSiteDivision: division,
+          onSiteDivisionHistory: history
+        }
+      })
     }))
     get().persist()
+  },
+
+  markUnitArrived: (incidentId, unitId) => {
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        return {
+          ...i,
+          jointUnits: (i.jointUnits || []).map(u => {
+            if (u.id !== unitId) return u
+            return { ...u, status: 'arrived' as const, arrivedAt: dayjs().format() }
+          })
+        }
+      })
+    }))
+    get().persist()
+  },
+
+  getActiveJointOperations: () => {
+    const state = get()
+    return state.incidents.filter(i =>
+      i.isJointOperation && i.status !== 'closed'
+    )
   },
 
   addAssignmentLog: (incidentId, log) => {

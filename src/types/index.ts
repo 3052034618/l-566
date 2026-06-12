@@ -32,6 +32,15 @@ export interface Incident {
   disposalNodes?: DisposalNode[]
   assignmentLogs?: AssignmentLog[]
   onSiteDivision?: string
+  onSiteDivisionHistory?: OnSiteDivisionChange[]
+}
+
+export interface OnSiteDivisionChange {
+  id: string
+  changedAt: string
+  changedBy: string
+  beforeContent: string
+  afterContent: string
 }
 
 export interface PoliceVehicle {
@@ -200,9 +209,11 @@ export interface DisposalNode {
   id: string
   name: string
   status: 'pending' | 'in_progress' | 'completed'
+  startedAt?: string
   completedAt?: string
   completedBy?: string
   notes?: string
+  expectedDurationMin?: number
 }
 
 export interface AssignmentLog {

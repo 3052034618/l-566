@@ -56,9 +56,24 @@ export default function CaseManagement() {
 
   const filteredEvidences = useMemo(() => {
     if (!currentCase) return []
-    if (evidenceTypeFilter === 'all') return currentCase.evidences
+    if (evidenceTypeFilter === 'all' || evidenceTypeFilter === 'transcript') {
+      if (evidenceTypeFilter === 'transcript') return []
+      return currentCase.evidences
+    }
     return currentCase.evidences.filter(e => e.type === evidenceTypeFilter)
   }, [currentCase, evidenceTypeFilter])
+
+  const filteredTranscripts = useMemo(() => {
+    if (!currentCase) return []
+    if (evidenceTypeFilter === 'all') return currentCase.transcripts
+    if (evidenceTypeFilter === 'transcript') return currentCase.transcripts
+    return []
+  }, [currentCase, evidenceTypeFilter])
+
+  const totalFilteredCount = filteredEvidences.length + filteredTranscripts.length
+  const totalMaterialCount = currentCase
+    ? currentCase.evidences.length + currentCase.transcripts.length
+    : 0
 
   const getMaterialTypeLabel = (type: string, isTranscript: boolean) => {
     if (isTranscript) return '笔录'
@@ -79,6 +94,10 @@ export default function CaseManagement() {
     doc.text(`案件编号：${currentCase.caseNumber}`, 14, 32)
     doc.text(`案件名称：${currentCase.title}`, 14, 40)
     doc.text(`导出时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}`, 14, 48)
+    const filterLabel = evidenceTypeFilter === 'all' ? '全部材料' :
+      evidenceTypeFilter === 'transcript' ? '仅笔录' :
+        getMaterialTypeLabel(evidenceTypeFilter, false)
+    doc.text(`筛选条件：${filterLabel}`, 14, 56)
 
     const materials: Array<{
       name: string
@@ -87,7 +106,7 @@ export default function CaseManagement() {
       caseNumber: string
     }> = []
 
-    currentCase.transcripts.forEach(t => {
+    filteredTranscripts.forEach(t => {
       materials.push({
         name: t.fileName || t.title,
         type: '笔录',
@@ -96,7 +115,7 @@ export default function CaseManagement() {
       })
     })
 
-    currentCase.evidences.forEach(e => {
+    filteredEvidences.forEach(e => {
       materials.push({
         name: e.fileName || e.name,
         type: getMaterialTypeLabel(e.type, false),
@@ -106,7 +125,7 @@ export default function CaseManagement() {
     })
 
     autoTable(doc, {
-      startY: 58,
+      startY: 66,
       head: [['序号', '文件名称', '类型', '上传时间', '所属案件']],
       body: materials.map((m, idx) => [
         idx + 1,
@@ -467,186 +486,199 @@ export default function CaseManagement() {
             <Card
               title={
                 <Space>
-                  <FileTextOutlined />
-                  <span>笔录材料</span>
-                  <Tag color="blue">{currentCase.transcripts.length} 份</Tag>
+                  <FileTextOutlined style={{ color: '#1677ff' }} />
+                  <span>案件材料</span>
+                  <Tag color="blue">
+                    {totalFilteredCount} / {totalMaterialCount} 份
+                  </Tag>
                 </Space>
               }
               style={{ marginBottom: 16 }}
               extra={
-                <Button size="small" icon={<UploadOutlined />} onClick={() => setTranscriptModal(true)}>
-                  上传笔录
-                </Button>
-              }
-              size="small"
-            >
-              {currentCase.transcripts.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>暂无笔录材料</div>
-              ) : (
-                <List
-                  size="small"
-                  dataSource={currentCase.transcripts}
-                  renderItem={t => (
-                    <List.Item
-                      actions={[
-                        <Button type="link" size="small" icon={<EyeOutlined />}>查看</Button>
-                      ]}
-                    >
-                      <List.Item.Meta
-                        avatar={<FileTextOutlined style={{ fontSize: 20, color: '#1677ff' }} />}
-                        title={
-                          <Space>
-                            <span>{t.title}</span>
-                            {t.fileName && (
-                              <Tag color="blue" icon={<PaperClipOutlined />}>{t.fileName}</Tag>
-                            )}
-                          </Space>
-                        }
-                        description={
-                          <Space size={16} wrap>
-                            <span style={{ fontSize: 12 }}>上传人：{t.uploadedBy}</span>
-                            <span style={{ fontSize: 12 }}>{dayjs(t.uploadedAt).format('YYYY-MM-DD HH:mm')}</span>
-                            {t.fileType && (
-                              <span style={{ fontSize: 12, color: '#1677ff' }}>
-                                类型：{t.fileType.split('/').pop()?.toUpperCase() || t.fileType}
-                              </span>
-                            )}
-                            {t.fileSize && (
-                              <span style={{ fontSize: 12, color: '#888' }}>
-                                大小：{t.fileSize < 1024 ? `${t.fileSize}B` : t.fileSize < 1024 * 1024 ? `${(t.fileSize / 1024).toFixed(1)}KB` : `${(t.fileSize / 1024 / 1024).toFixed(1)}MB`}
-                              </span>
-                            )}
-                          </Space>
-                        }
-                      />
-                      <div style={{ fontSize: 13, color: '#666', maxWidth: 400 }}>
-                        {t.content.slice(0, 50)}...
-                      </div>
-                    </List.Item>
-                  )}
-                />
-              )}
-            </Card>
-
-            <Card
-              title={
                 <Space>
-                  <PaperClipOutlined />
-                  <span>证据材料</span>
-                  <Tag color="green">
-                    {filteredEvidences.length} / {currentCase.evidences.length} 件
-                  </Tag>
+                  <Button size="small" icon={<UploadOutlined />} onClick={() => setTranscriptModal(true)}>
+                    上传笔录
+                  </Button>
+                  <Button size="small" icon={<PlusOutlined />} onClick={() => setEvidenceModal(true)}>
+                    添加证据
+                  </Button>
                 </Space>
               }
               size="small"
-              extra={
-                <Button size="small" icon={<PlusOutlined />} onClick={() => setEvidenceModal(true)}>
-                  添加证据
-                </Button>
-              }
             >
-              <Space style={{ marginBottom: 12 }} wrap size={4}>
+              <Space style={{ marginBottom: 16 }} wrap size={4}>
                 <span style={{ fontSize: 12, color: '#666' }}><FilterOutlined /> 类型筛选：</span>
                 <Tag
                   color={evidenceTypeFilter === 'all' ? 'blue' : 'default'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => setEvidenceTypeFilter('all')}
                 >
-                  全部
+                  全部 ({totalMaterialCount})
+                </Tag>
+                <Tag
+                  color={evidenceTypeFilter === 'transcript' ? 'blue' : 'default'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEvidenceTypeFilter('transcript')}
+                >
+                  笔录 ({currentCase?.transcripts.length || 0})
                 </Tag>
                 <Tag
                   color={evidenceTypeFilter === 'image' ? 'blue' : 'default'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => setEvidenceTypeFilter('image')}
                 >
-                  图片
+                  图片 ({currentCase?.evidences.filter(e => e.type === 'image').length || 0})
                 </Tag>
                 <Tag
                   color={evidenceTypeFilter === 'video' ? 'blue' : 'default'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => setEvidenceTypeFilter('video')}
                 >
-                  视频
+                  视频 ({currentCase?.evidences.filter(e => e.type === 'video').length || 0})
                 </Tag>
                 <Tag
                   color={evidenceTypeFilter === 'document' ? 'blue' : 'default'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => setEvidenceTypeFilter('document')}
                 >
-                  文档
+                  文档 ({currentCase?.evidences.filter(e => e.type === 'document').length || 0})
                 </Tag>
                 <Tag
                   color={evidenceTypeFilter === 'audio' ? 'blue' : 'default'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => setEvidenceTypeFilter('audio')}
                 >
-                  音频
+                  音频 ({currentCase?.evidences.filter(e => e.type === 'audio').length || 0})
                 </Tag>
                 <Tag
                   color={evidenceTypeFilter === 'physical' ? 'blue' : 'default'}
                   style={{ cursor: 'pointer' }}
                   onClick={() => setEvidenceTypeFilter('physical')}
                 >
-                  物证
+                  物证 ({currentCase?.evidences.filter(e => e.type === 'physical').length || 0})
                 </Tag>
               </Space>
-              {filteredEvidences.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>暂无证据材料</div>
+
+              {totalFilteredCount === 0 ? (
+                <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                  <FolderOpenOutlined style={{ fontSize: 40, marginBottom: 12, display: 'block', color: '#ddd' }} />
+                  当前筛选条件下暂无材料
+                </div>
               ) : (
-                <Row gutter={[12, 12]}>
-                  {filteredEvidences.map(e => (
-                    <Col xs={24} sm={12} key={e.id}>
-                      <Card size="small" style={{ background: '#fafafa' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div style={{
-                            fontSize: 24,
-                            color: e.type === 'image' ? '#eb2f96' :
-                              e.type === 'video' ? '#722ed1' :
-                                e.type === 'audio' ? '#13c2c2' : '#1677ff'
-                          }}>
-                            {e.type === 'image' ? '🖼️' :
-                              e.type === 'video' ? '🎬' :
-                                e.type === 'audio' ? '🎵' : e.type === 'physical' ? '🔍' : '📄'}
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 500 }}>
-                              <Space>
-                                <span>{e.name}</span>
-                                {e.fileName && (
-                                  <Tag icon={<PaperClipOutlined />}>{e.fileName}</Tag>
-                                )}
-                              </Space>
+                <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                  {filteredTranscripts.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: '#1677ff' }}>
+                        📝 笔录材料 ({filteredTranscripts.length} 份)
+                      </div>
+                      <List
+                        size="small"
+                        bordered
+                        dataSource={filteredTranscripts}
+                        renderItem={t => (
+                          <List.Item
+                            actions={[
+                              <Button type="link" size="small" icon={<EyeOutlined />}>查看</Button>
+                            ]}
+                          >
+                            <List.Item.Meta
+                              avatar={<FileTextOutlined style={{ fontSize: 20, color: '#1677ff' }} />}
+                              title={
+                                <Space>
+                                  <span>{t.title}</span>
+                                  {t.fileName && (
+                                    <Tag color="blue" icon={<PaperClipOutlined />}>{t.fileName}</Tag>
+                                  )}
+                                </Space>
+                              }
+                              description={
+                                <Space size={16} wrap>
+                                  <span style={{ fontSize: 12 }}>上传人：{t.uploadedBy}</span>
+                                  <span style={{ fontSize: 12 }}>{dayjs(t.uploadedAt).format('YYYY-MM-DD HH:mm')}</span>
+                                  {t.fileType && (
+                                    <span style={{ fontSize: 12, color: '#1677ff' }}>
+                                      类型：{t.fileType.split('/').pop()?.toUpperCase() || t.fileType}
+                                    </span>
+                                  )}
+                                  {t.fileSize && (
+                                    <span style={{ fontSize: 12, color: '#888' }}>
+                                      大小：{t.fileSize < 1024 ? `${t.fileSize}B` : t.fileSize < 1024 * 1024 ? `${(t.fileSize / 1024).toFixed(1)}KB` : `${(t.fileSize / 1024 / 1024).toFixed(1)}MB`}
+                                    </span>
+                                  )}
+                                </Space>
+                              }
+                            />
+                            <div style={{ fontSize: 13, color: '#666', maxWidth: 400 }}>
+                              {t.content.slice(0, 50)}...
                             </div>
-                            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                              <Space wrap size={8}>
-                                <Tag>{e.type === 'document' ? '文档' :
-                                  e.type === 'image' ? '图片' :
-                                    e.type === 'video' ? '视频' :
-                                      e.type === 'audio' ? '音频' : '物证'}</Tag>
-                                <span>{dayjs(e.uploadedAt).format('YYYY-MM-DD HH:mm')}</span>
-                                {e.fileType && (
-                                  <span style={{ color: '#1677ff' }}>
-                                    {e.fileType.split('/').pop()?.toUpperCase() || e.fileType}
-                                  </span>
-                                )}
-                                {e.fileSize && (
-                                  <span style={{ color: '#888' }}>
-                                    {e.fileSize < 1024 ? `${e.fileSize}B` : e.fileSize < 1024 * 1024 ? `${(e.fileSize / 1024).toFixed(1)}KB` : `${(e.fileSize / 1024 / 1024).toFixed(1)}MB`}
-                                  </span>
-                                )}
-                              </Space>
-                            </div>
-                            {e.description && (
-                              <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
-                                {e.description}
+                          </List.Item>
+                        )}
+                      />
+                    </div>
+                  )}
+
+                  {filteredEvidences.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: '#52c41a' }}>
+                        📎 证据材料 ({filteredEvidences.length} 份)
+                      </div>
+                      <Row gutter={[12, 12]}>
+                        {filteredEvidences.map(e => (
+                          <Col xs={24} sm={12} key={e.id}>
+                            <Card size="small" style={{ background: '#fafafa' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{
+                                  fontSize: 24,
+                                  color: e.type === 'image' ? '#eb2f96' :
+                                    e.type === 'video' ? '#722ed1' :
+                                      e.type === 'audio' ? '#13c2c2' : '#1677ff'
+                                }}>
+                                  {e.type === 'image' ? '🖼️' :
+                                    e.type === 'video' ? '🎬' :
+                                      e.type === 'audio' ? '🎵' : e.type === 'physical' ? '🔍' : '📄'}
+                                </div>
+                                <div style={{ flex: 1 }}>
+                                  <div style={{ fontWeight: 500 }}>
+                                    <Space>
+                                      <span>{e.name}</span>
+                                      {e.fileName && (
+                                        <Tag icon={<PaperClipOutlined />}>{e.fileName}</Tag>
+                                      )}
+                                    </Space>
+                                  </div>
+                                  <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                                    <Space wrap size={8}>
+                                      <Tag>{e.type === 'document' ? '文档' :
+                                        e.type === 'image' ? '图片' :
+                                          e.type === 'video' ? '视频' :
+                                            e.type === 'audio' ? '音频' : '物证'}</Tag>
+                                      <span>{dayjs(e.uploadedAt).format('YYYY-MM-DD HH:mm')}</span>
+                                      {e.fileType && (
+                                        <span style={{ color: '#1677ff' }}>
+                                          {e.fileType.split('/').pop()?.toUpperCase() || e.fileType}
+                                        </span>
+                                      )}
+                                      {e.fileSize && (
+                                        <span style={{ color: '#888' }}>
+                                          {e.fileSize < 1024 ? `${e.fileSize}B` : e.fileSize < 1024 * 1024 ? `${(e.fileSize / 1024).toFixed(1)}KB` : `${(e.fileSize / 1024 / 1024).toFixed(1)}MB`}
+                                        </span>
+                                      )}
+                                    </Space>
+                                  </div>
+                                  {e.description && (
+                                    <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                                      {e.description}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        </div>
-                      </Card>
-                    </Col>
-                  ))}
-                </Row>
+                            </Card>
+                          </Col>
+                        ))}
+                      </Row>
+                    </div>
+                  )}
+                </Space>
               )}
             </Card>
           </div>

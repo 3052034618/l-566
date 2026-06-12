@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Card, Row, Col, Tag, Space, Button, List, Modal, message, Badge, Empty, Tooltip, Statistic,
   Descriptions, Divider, Select
@@ -21,6 +21,7 @@ export default function VideoMonitor() {
   const [selectedCamera, setSelectedCamera] = useState<string | null>(null)
   const [detailVisible, setDetailVisible] = useState(false)
   const [alertPlaying, setAlertPlaying] = useState(false)
+  const alertTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   const alertCameras = cameras.filter(c => c.hasAlert)
   const onlineCameras = cameras.filter(c => c.status === 'online')
@@ -34,21 +35,45 @@ export default function VideoMonitor() {
     return `${mins}分${secs}秒`
   }
 
-  useEffect(() => {
-    if (alertCameras.length > 0 && alertSoundEnabled && !alertPlaying) {
-      setAlertPlaying(true)
-      playAlertSound()
-      const interval = setInterval(() => {
-        if (usePoliceStore.getState().cameras.filter(c => c.hasAlert).length > 0) {
-          playAlertSound()
-        }
-      }, alertInterval * 1000)
-      return () => clearInterval(interval)
+  const clearAlertTimer = () => {
+    if (alertTimerRef.current) {
+      clearInterval(alertTimerRef.current)
+      alertTimerRef.current = null
     }
-    if (alertCameras.length === 0) {
+  }
+
+  const startAlertTimer = () => {
+    clearAlertTimer()
+    setAlertPlaying(true)
+    playAlertSound()
+    alertTimerRef.current = setInterval(() => {
+      const hasActiveAlerts = usePoliceStore.getState().cameras.filter(c => c.hasAlert).length > 0
+      if (hasActiveAlerts && usePoliceStore.getState().alertSoundEnabled) {
+        playAlertSound()
+      }
+    }, alertInterval * 1000)
+  }
+
+  useEffect(() => {
+    return () => clearAlertTimer()
+  }, [])
+
+  useEffect(() => {
+    const hasAlerts = alertCameras.length > 0
+    if (hasAlerts && alertSoundEnabled) {
+      startAlertTimer()
+    } else {
+      clearAlertTimer()
       setAlertPlaying(false)
     }
-  }, [alertCameras.length, alertSoundEnabled, alertPlaying, alertInterval])
+  }, [alertCameras.length, alertSoundEnabled])
+
+  useEffect(() => {
+    const hasAlerts = usePoliceStore.getState().cameras.some(c => c.hasAlert)
+    if (hasAlerts && alertSoundEnabled) {
+      startAlertTimer()
+    }
+  }, [alertInterval])
 
   const viewDetail = (cameraId: string) => {
     setSelectedCamera(cameraId)
