@@ -15,6 +15,11 @@ import { usePoliceStore } from './store/policeStore'
 export default function App() {
   const checkOverdueIncidents = usePoliceStore(s => s.checkOverdueIncidents)
   const checkOverdueCases = usePoliceStore(s => s.checkOverdueCases)
+  const initialize = usePoliceStore(s => s.initialize)
+
+  useEffect(() => {
+    initialize()
+  }, [initialize])
 
   useEffect(() => {
     const t1 = setInterval(checkOverdueIncidents, 30000)

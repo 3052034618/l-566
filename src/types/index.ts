@@ -85,6 +85,12 @@ export interface Schedule {
   riskLevel: 'low' | 'medium' | 'high'
   changeRequested?: boolean
   changeStatus?: ScheduleChangeStatus
+  changeTargetDate?: string
+  changeTargetShift?: 'morning' | 'afternoon' | 'night'
+  changeTargetAreaId?: string
+  changeTargetAreaName?: string
+  changeReason?: string
+  originalSchedule?: { date: string; shift: string; areaName: string }
 }
 
 export interface Area {
@@ -117,6 +123,10 @@ export interface Transcript {
   content: string
   uploadedAt: string
   uploadedBy: string
+  fileId?: string
+  fileName?: string
+  fileType?: string
+  fileSize?: number
 }
 
 export interface Evidence {
@@ -125,6 +135,19 @@ export interface Evidence {
   type: 'document' | 'image' | 'video' | 'audio' | 'physical'
   description: string
   uploadedAt: string
+  fileId?: string
+  fileName?: string
+  fileType?: string
+  fileSize?: number
+}
+
+export interface CameraAlertLog {
+  id: string
+  cameraId: string
+  alertType: string
+  acknowledgedAt: string
+  acknowledgedBy: string
+  notes?: string
 }
 
 export interface Alert {

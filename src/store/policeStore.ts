@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import {
   Incident, PoliceVehicle, PoliceOfficer, Camera, Case, Schedule, Area, Alert, TaskAssignment,
-  IncidentType, PriorityLevel, IncidentStatus, CaseStatus
+  IncidentType, PriorityLevel, IncidentStatus, CaseStatus, CameraAlertLog
 } from '../types'
 import {
   mockAreas, mockOfficers, mockVehicles, mockCameras, mockIncidents, mockCases, mockAlerts,
@@ -9,6 +9,9 @@ import {
 } from '../data/mockData'
 import { v4 as uuidv4 } from 'uuid'
 import dayjs from 'dayjs'
+import {
+  saveToStorage, loadFromStorage, saveFileToIndexedDB, playAlertSound
+} from '../utils/persistence'
 
 interface PoliceStore {
   incidents: Incident[]
@@ -20,6 +23,12 @@ interface PoliceStore {
   areas: Area[]
   alerts: Alert[]
   assignments: TaskAssignment[]
+  cameraAlertLogs: CameraAlertLog[]
+  alertSoundEnabled: boolean
+  isInitialized: boolean
+
+  initialize: () => void
+  persist: () => void
 
   addIncident: (data: Omit<Incident, 'id' | 'reportedAt' | 'status' | 'assignedOfficerIds' | 'notes' | 'cameraIds' | 'type' | 'priority'>) => Incident
   classifyIncident: (description: string, location: string) => { type: IncidentType; priority: PriorityLevel }
@@ -31,16 +40,21 @@ interface PoliceStore {
   addNoteToIncident: (incidentId: string, note: string) => void
   closeIncident: (incidentId: string) => void
 
-  addCase: (data: Omit<Case, 'id' | 'transcripts' | 'evidences' | 'notes' | 'isOverdue'>) => Case
+  addCase: (data: Omit<Case, 'id' | 'transcripts' | 'evidences' | 'isOverdue'>) => Case
   updateCaseStatus: (id: string, status: CaseStatus) => void
-  addTranscript: (caseId: string, transcript: Omit<Case['transcripts'][0], 'id'>) => void
-  addEvidence: (caseId: string, evidence: Omit<Case['evidences'][0], 'id'>) => void
+  addTranscript: (caseId: string, transcript: Omit<Case['transcripts'][0], 'id'>, file?: File) => Promise<void>
+  addEvidence: (caseId: string, evidence: Omit<Case['evidences'][0], 'id'>, file?: File) => Promise<void>
 
   generateSchedules: () => void
-  requestScheduleChange: (scheduleId: string) => void
+  requestScheduleChange: (scheduleId: string, target: {
+    date: string; shift: Schedule['shift']; areaId: string; areaName: string; reason: string
+  }) => void
   approveScheduleChange: (scheduleId: string, approve: boolean) => void
 
   markAlertRead: (alertId: string) => void
+  acknowledgeCameraAlert: (cameraId: string, notes?: string) => void
+  toggleAlertSound: (enabled: boolean) => void
+
   checkOverdueIncidents: () => void
   checkOverdueCases: () => void
   getStatistics: () => any
@@ -57,15 +71,67 @@ function calcDistance([lat1, lng1]: [number, number], [lat2, lng2]: [number, num
 }
 
 export const usePoliceStore = create<PoliceStore>((set, get) => ({
-  incidents: [...mockIncidents],
-  vehicles: [...mockVehicles],
-  officers: [...mockOfficers],
-  cameras: [...mockCameras],
-  cases: [...mockCases],
-  schedules: generateInitialSchedules(),
+  incidents: [],
+  vehicles: [],
+  officers: [],
+  cameras: [],
+  cases: [],
+  schedules: [],
   areas: [...mockAreas],
-  alerts: [...mockAlerts],
+  alerts: [],
   assignments: [],
+  cameraAlertLogs: [],
+  alertSoundEnabled: true,
+  isInitialized: false,
+
+  initialize: () => {
+    if (get().isInitialized) return
+
+    const persisted = loadFromStorage()
+    if (persisted) {
+      set({
+        incidents: persisted.incidents || [...mockIncidents],
+        vehicles: persisted.vehicles || [...mockVehicles],
+        officers: persisted.officers || [...mockOfficers],
+        cameras: persisted.cameras || [...mockCameras],
+        cases: persisted.cases || [...mockCases],
+        schedules: persisted.schedules || generateInitialSchedules(),
+        alerts: persisted.alerts || [...mockAlerts],
+        assignments: persisted.assignments || [],
+        cameraAlertLogs: (persisted as any).cameraAlertLogs || [],
+        isInitialized: true
+      })
+    } else {
+      set({
+        incidents: [...mockIncidents],
+        vehicles: [...mockVehicles],
+        officers: [...mockOfficers],
+        cameras: [...mockCameras],
+        cases: [...mockCases],
+        schedules: generateInitialSchedules(),
+        alerts: [...mockAlerts],
+        assignments: [],
+        cameraAlertLogs: [],
+        isInitialized: true
+      })
+    }
+    get().persist()
+  },
+
+  persist: () => {
+    const state = get()
+    saveToStorage({
+      incidents: state.incidents,
+      vehicles: state.vehicles,
+      officers: state.officers,
+      cameras: state.cameras,
+      cases: state.cases,
+      schedules: state.schedules,
+      alerts: state.alerts,
+      assignments: state.assignments,
+      cameraAlertLogs: state.cameraAlertLogs
+    })
+  },
 
   classifyIncident: (description, location) => {
     const text = description + location
@@ -106,6 +172,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       type, priority
     }
     set(state => ({ incidents: [newIncident, ...state.incidents] }))
+    get().persist()
     return newIncident
   },
 
@@ -121,6 +188,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         return updated
       })
     }))
+    get().persist()
   },
 
   assignTask: (incidentId) => {
@@ -189,6 +257,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         ...o, currentLoad: o.currentLoad + 1, currentIncidentIds: [...o.currentIncidentIds, incidentId]
       } : o)
     }))
+    get().persist()
     return assignment
   },
 
@@ -200,6 +269,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       assignments: state.assignments.map(a => a.id === assignmentId ? { ...a, confirmed: true } : a),
       incidents: state.incidents.map(i => i.id === assignment.incidentId ? { ...i, status: 'en_route' } : i)
     }))
+    get().persist()
   },
 
   requestTransfer: (assignmentId, reason) => {
@@ -208,6 +278,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         ...a, transferRequested: true, transferStatus: 'pending', transferReason: reason
       } : a)
     }))
+    get().persist()
   },
 
   approveTransfer: (assignmentId, approve) => {
@@ -216,18 +287,36 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
     if (!assignment) return
 
     if (approve) {
+      const oldVehicleId = assignment.vehicleId
+      const oldOfficerIds = [...assignment.officerIds]
+      const incidentId = assignment.incidentId
+
       set(state => ({
-        assignments: state.assignments.map(a => a.id === assignmentId ? { ...a, transferStatus: 'approved' } : a)
+        assignments: state.assignments.filter(a => a.id !== assignmentId),
+        vehicles: state.vehicles.map(v => v.id === oldVehicleId ? {
+          ...v, status: 'available' as const, currentIncidentId: undefined,
+          currentLoad: Math.max(0, v.currentLoad - oldOfficerIds.length)
+        } : v),
+        officers: state.officers.map(o => oldOfficerIds.includes(o.id) ? {
+          ...o, currentLoad: Math.max(0, o.currentLoad - 1),
+          currentIncidentIds: o.currentIncidentIds.filter(id => id !== incidentId)
+        } : o),
+        incidents: state.incidents.map(i => i.id === incidentId ? {
+          ...i, status: 'pending' as const, assignedVehicleId: undefined, assignedOfficerIds: []
+        } : i)
       }))
+      get().persist()
+
       setTimeout(() => {
-        get().assignTask(assignment.incidentId)
-      }, 500)
+        get().assignTask(incidentId)
+      }, 300)
     } else {
       set(state => ({
         assignments: state.assignments.map(a => a.id === assignmentId ? {
-          ...a, transferRequested: false, transferStatus: 'rejected'
+          ...a, transferRequested: false, transferStatus: 'rejected' as const
         } : a)
       }))
+      get().persist()
     }
   },
 
@@ -237,6 +326,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         ...i, notes: [...i.notes, note]
       } : i)
     }))
+    get().persist()
   },
 
   closeIncident: (incidentId) => {
@@ -247,6 +337,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       incidents: state.incidents.map(i => i.id === incidentId ? {
         ...i, status: 'closed', closedAt: dayjs().format()
       } : i),
+      assignments: state.assignments.filter(a => a.incidentId !== incidentId),
       vehicles: state.vehicles.map(v => v.currentIncidentId === incidentId ? {
         ...v, status: 'available', currentIncidentId: undefined,
         currentLoad: Math.max(0, v.currentLoad - (incident.assignedOfficerIds.length || 2))
@@ -256,6 +347,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         currentIncidentIds: o.currentIncidentIds.filter(id => id !== incidentId)
       } : o)
     }))
+    get().persist()
   },
 
   addCase: (data) => {
@@ -264,6 +356,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       transcripts: [], evidences: [], notes: '', isOverdue: false
     }
     set(state => ({ cases: [newCase, ...state.cases] }))
+    get().persist()
     return newCase
   },
 
@@ -277,48 +370,140 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         return updated
       })
     }))
+    get().persist()
   },
 
-  addTranscript: (caseId, transcript) => {
+  addTranscript: async (caseId, transcript, file) => {
+    const extra: any = {}
+    if (file) {
+      const fileInfo = await saveFileToIndexedDB(file)
+      extra.fileId = fileInfo.id
+      extra.fileName = fileInfo.name
+      extra.fileType = fileInfo.type
+      extra.fileSize = fileInfo.size
+    }
     set(state => ({
       cases: state.cases.map(c => c.id === caseId ? {
-        ...c, transcripts: [...c.transcripts, { ...transcript, id: uuidv4() }]
+        ...c, transcripts: [...c.transcripts, { ...transcript, id: uuidv4(), ...extra }]
       } : c)
     }))
+    get().persist()
   },
 
-  addEvidence: (caseId, evidence) => {
+  addEvidence: async (caseId, evidence, file) => {
+    const extra: any = {}
+    if (file) {
+      const fileInfo = await saveFileToIndexedDB(file)
+      extra.fileId = fileInfo.id
+      extra.fileName = fileInfo.name
+      extra.fileType = fileInfo.type
+      extra.fileSize = fileInfo.size
+    }
     set(state => ({
       cases: state.cases.map(c => c.id === caseId ? {
-        ...c, evidences: [...c.evidences, { ...evidence, id: uuidv4() }]
+        ...c, evidences: [...c.evidences, { ...evidence, id: uuidv4(), ...extra }]
       } : c)
     }))
+    get().persist()
   },
 
   generateSchedules: () => {
     set({ schedules: generateInitialSchedules() })
+    get().persist()
   },
 
-  requestScheduleChange: (scheduleId) => {
+  requestScheduleChange: (scheduleId, target) => {
+    const state = get()
+    const schedule = state.schedules.find(s => s.id === scheduleId)
+    if (!schedule) return
+
     set(state => ({
       schedules: state.schedules.map(s => s.id === scheduleId ? {
-        ...s, changeRequested: true, changeStatus: 'pending'
+        ...s,
+        changeRequested: true,
+        changeStatus: 'pending',
+        changeTargetDate: target.date,
+        changeTargetShift: target.shift,
+        changeTargetAreaId: target.areaId,
+        changeTargetAreaName: target.areaName,
+        changeReason: target.reason,
+        originalSchedule: { date: s.date, shift: s.shift, areaName: s.areaName }
       } : s)
     }))
+    get().persist()
   },
 
   approveScheduleChange: (scheduleId, approve) => {
-    set(state => ({
-      schedules: state.schedules.map(s => s.id === scheduleId ? {
-        ...s, changeRequested: false, changeStatus: approve ? 'approved' : 'rejected'
-      } : s)
-    }))
+    const state = get()
+    const schedule = state.schedules.find(s => s.id === scheduleId)
+    if (!schedule) return
+
+    if (approve && schedule.changeTargetDate && schedule.changeTargetShift && schedule.changeTargetAreaId) {
+      const targetArea = state.areas.find(a => a.id === schedule.changeTargetAreaId)
+      set(state => ({
+        schedules: state.schedules.map(s => s.id === scheduleId ? {
+          ...s,
+          date: schedule.changeTargetDate!,
+          shift: schedule.changeTargetShift!,
+          areaId: schedule.changeTargetAreaId!,
+          areaName: schedule.changeTargetAreaName!,
+          riskLevel: targetArea?.riskLevel || s.riskLevel,
+          changeRequested: false,
+          changeStatus: 'approved',
+          changeTargetDate: undefined,
+          changeTargetShift: undefined,
+          changeTargetAreaId: undefined,
+          changeTargetAreaName: undefined,
+          changeReason: undefined,
+          originalSchedule: undefined
+        } : s)
+      }))
+    } else {
+      set(state => ({
+        schedules: state.schedules.map(s => s.id === scheduleId ? {
+          ...s,
+          changeRequested: false,
+          changeStatus: 'rejected',
+          changeTargetDate: undefined,
+          changeTargetShift: undefined,
+          changeTargetAreaId: undefined,
+          changeTargetAreaName: undefined,
+          changeReason: undefined,
+          originalSchedule: undefined
+        } : s)
+      }))
+    }
+    get().persist()
   },
 
   markAlertRead: (alertId) => {
     set(state => ({
       alerts: state.alerts.map(a => a.id === alertId ? { ...a, read: true } : a)
     }))
+    get().persist()
+  },
+
+  acknowledgeCameraAlert: (cameraId, notes) => {
+    const log: CameraAlertLog = {
+      id: uuidv4(),
+      cameraId,
+      alertType: get().cameras.find(c => c.id === cameraId)?.alertType || 'unknown',
+      acknowledgedAt: dayjs().format(),
+      acknowledgedBy: '指挥长·系统管理员',
+      notes
+    }
+    set(state => ({
+      cameras: state.cameras.map(c => c.id === cameraId ? {
+        ...c, hasAlert: false, alertType: undefined
+      } : c),
+      alerts: state.alerts.filter(a => !(a.type === 'abnormal_behavior' && a.relatedId === cameraId)),
+      cameraAlertLogs: [...state.cameraAlertLogs, log]
+    }))
+    get().persist()
+  },
+
+  toggleAlertSound: (enabled) => {
+    set({ alertSoundEnabled: enabled })
   },
 
   checkOverdueIncidents: () => {
@@ -328,6 +513,9 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       if (inc.status === 'dispatched' && inc.dispatchedAt) {
         const diff = now.diff(dayjs(inc.dispatchedAt), 'minute')
         if (diff > 10 && !inc.isOverdue) {
+          if (state.alertSoundEnabled) {
+            playAlertSound()
+          }
           const newAlert: Alert = {
             id: uuidv4(), type: 'overdue_incident', title: '出警超时预警',
             message: `警情【${inc.location}】派警${diff}分钟仍未到场，请关注！`,
@@ -337,7 +525,14 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
             incidents: s.incidents.map(i => i.id === inc.id ? { ...i, isOverdue: true, escalated: true } : i),
             alerts: [newAlert, ...s.alerts]
           }))
+          get().persist()
         }
+      }
+    })
+
+    state.cameras.forEach(cam => {
+      if (cam.hasAlert && state.alertSoundEnabled) {
+        playAlertSound()
       }
     })
   },
@@ -358,6 +553,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
             cases: s.cases.map(cc => cc.id === c.id ? { ...cc, isOverdue: true } : cc),
             alerts: [newAlert, ...s.alerts]
           }))
+          get().persist()
         }
       }
     })

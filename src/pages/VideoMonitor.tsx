@@ -1,22 +1,44 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
-  Card, Row, Col, Tag, Space, Button, List, Modal, message, Badge, Empty, Tooltip, Statistic
+  Card, Row, Col, Tag, Space, Button, List, Modal, message, Badge, Empty, Tooltip, Statistic,
+  Descriptions, Divider
 } from 'antd'
 import {
   VideoCameraOutlined, WarningOutlined, EyeOutlined, BellOutlined,
-  PlayCircleOutlined, SoundOutlined
+  PlayCircleOutlined, SoundOutlined, CheckCircleOutlined
 } from '@ant-design/icons'
 import { usePoliceStore } from '../store/policeStore'
+import { playAlertSound } from '../utils/persistence'
 import dayjs from 'dayjs'
 
 export default function VideoMonitor() {
   const cameras = usePoliceStore(s => s.cameras)
   const incidents = usePoliceStore(s => s.incidents)
+  const cameraAlertLogs = usePoliceStore(s => s.cameraAlertLogs)
+  const acknowledgeCameraAlert = usePoliceStore(s => s.acknowledgeCameraAlert)
+  const alertSoundEnabled = usePoliceStore(s => s.alertSoundEnabled)
   const [selectedCamera, setSelectedCamera] = useState<string | null>(null)
   const [detailVisible, setDetailVisible] = useState(false)
+  const [alertPlaying, setAlertPlaying] = useState(false)
 
   const alertCameras = cameras.filter(c => c.hasAlert)
   const onlineCameras = cameras.filter(c => c.status === 'online')
+
+  useEffect(() => {
+    if (alertCameras.length > 0 && alertSoundEnabled && !alertPlaying) {
+      setAlertPlaying(true)
+      playAlertSound()
+      const interval = setInterval(() => {
+        if (usePoliceStore.getState().cameras.filter(c => c.hasAlert).length > 0) {
+          playAlertSound()
+        }
+      }, 3000)
+      return () => clearInterval(interval)
+    }
+    if (alertCameras.length === 0) {
+      setAlertPlaying(false)
+    }
+  }, [alertCameras.length, alertSoundEnabled, alertPlaying])
 
   const viewDetail = (cameraId: string) => {
     setSelectedCamera(cameraId)
@@ -24,7 +46,28 @@ export default function VideoMonitor() {
   }
 
   const handleAcknowledgeAlert = (cameraId: string) => {
-    message.success('报警已确认，已通知附近巡逻警员前往处置')
+    Modal.confirm({
+      title: '确认报警',
+      content: '确认收到该报警信息？确认后报警声音将停止，并记录确认日志。',
+      okText: '确认报警',
+      okType: 'danger',
+      onOk: () => {
+        acknowledgeCameraAlert(cameraId, '指挥长确认收到报警，已通知附近巡逻警员前往处置')
+        setAlertPlaying(false)
+        message.success('报警已确认，已记录确认日志')
+        setCurrentCameraRefresh()
+      }
+    })
+  }
+
+  const setCurrentCameraRefresh = () => {
+    if (selectedCamera) {
+      setTimeout(() => {
+        const updated = usePoliceStore.getState().cameras.find(c => c.id === selectedCamera)
+        setSelectedCamera(null)
+        setTimeout(() => setSelectedCamera(updated?.id || null), 50)
+      }, 100)
+    }
   }
 
   const getRelatedIncidents = (cameraId: string) => {
@@ -300,6 +343,54 @@ export default function VideoMonitor() {
                 </Card>
               </Col>
             </Row>
+
+            <Divider style={{ margin: '16px 0' }} />
+
+            <Card size="small" title={
+              <Space>
+                <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                <span>报警确认记录</span>
+                <Tag color="blue">{cameraAlertLogs.filter(l => l.cameraId === currentCamera.id).length} 条</Tag>
+              </Space>
+            }>
+              {cameraAlertLogs.filter(l => l.cameraId === currentCamera.id).length === 0 ? (
+                <div style={{ color: '#999', fontSize: 13, textAlign: 'center', padding: 20 }}>
+                  暂无报警确认记录
+                </div>
+              ) : (
+                <List
+                  size="small"
+                  dataSource={cameraAlertLogs
+                    .filter(l => l.cameraId === currentCamera.id)
+                    .sort((a, b) => dayjs(b.acknowledgedAt).unix() - dayjs(a.acknowledgedAt).unix())}
+                  renderItem={log => (
+                    <List.Item>
+                      <List.Item.Meta
+                        avatar={<CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20 }} />}
+                        title={
+                          <Space>
+                            <span>{log.alertType}</span>
+                            <Tag color="green">已确认</Tag>
+                          </Space>
+                        }
+                        description={
+                          <div>
+                            <div style={{ fontSize: 12, color: '#666' }}>
+                              确认人：{log.acknowledgedBy} · {dayjs(log.acknowledgedAt).format('YYYY-MM-DD HH:mm:ss')}
+                            </div>
+                            {log.notes && (
+                              <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                                备注：{log.notes}
+                              </div>
+                            )}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              )}
+            </Card>
           </div>
         )}
       </Modal>

@@ -56,18 +56,34 @@ export default function Schedule() {
   const openChangeModal = (s: Schedule) => {
     setSelectedSchedule(s)
     changeForm.setFieldsValue({
-      date: s.date,
+      date: dayjs(s.date),
       shift: s.shift,
-      areaId: s.areaId
+      areaId: s.areaId,
+      targetDate: null,
+      targetShift: null,
+      targetAreaId: null,
+      reason: null
     })
     setChangeModal(true)
   }
 
-  const handleChangeRequest = () => {
-    if (selectedSchedule) {
-      requestScheduleChange(selectedSchedule.id)
-      message.success('调班申请已提交，等待审批')
-      setChangeModal(false)
+  const handleChangeRequest = async () => {
+    try {
+      const values = await changeForm.validateFields()
+      if (selectedSchedule) {
+        const targetArea = areas.find(a => a.id === values.targetAreaId)
+        requestScheduleChange(selectedSchedule.id, {
+          date: values.targetDate.format('YYYY-MM-DD'),
+          shift: values.targetShift,
+          areaId: values.targetAreaId,
+          areaName: targetArea?.name || '',
+          reason: values.reason
+        })
+        message.success('调班申请已提交，等待审批')
+        setChangeModal(false)
+      }
+    } catch (e) {
+      console.error(e)
     }
   }
 
@@ -151,11 +167,24 @@ export default function Schedule() {
                       <Badge status="warning" />
                       <strong>{o?.name}</strong>
                       <span style={{ color: '#666' }}>申请调班</span>
+                      {s.changeReason && (
+                        <Tag color="blue">原因：{
+                          s.changeReason === 'personal' ? '个人事务' :
+                          s.changeReason === 'swap' ? '与同事换班' :
+                          s.changeReason === 'training' ? '培训学习' : '其他原因'
+                        }</Tag>
+                      )}
                     </Space>
                     <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                      原排班：{s.date} {SHIFT_LABELS[s.shift]} - {s.areaName}
-                      （<Tag color={riskColor(s.riskLevel)}>{riskLabel(s.riskLevel)}</Tag>）
+                      <span style={{ color: '#faad14' }}>原排班：</span>
+                      {s.originalSchedule?.date || s.date} {SHIFT_LABELS[s.originalSchedule?.shift as keyof typeof SHIFT_LABELS] || SHIFT_LABELS[s.shift]} - {s.originalSchedule?.areaName || s.areaName}
                     </div>
+                    {s.changeTargetDate && s.changeTargetShift && s.changeTargetAreaName && (
+                      <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>
+                        <span style={{ color: '#52c41a' }}>目标排班：</span>
+                        {s.changeTargetDate} {SHIFT_LABELS[s.changeTargetShift]} - {s.changeTargetAreaName}
+                      </div>
+                    )}
                   </div>
                   <Space>
                     <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(s, true)}>
@@ -269,27 +298,83 @@ export default function Schedule() {
         onCancel={() => setChangeModal(false)}
         onOk={handleChangeRequest}
         okText="提交申请"
+        width={600}
       >
         <Form form={changeForm} layout="vertical">
-          <Form.Item label="原排班日期" name="date">
-            <DatePicker style={{ width: '100%' }} disabled />
-          </Form.Item>
-          <Form.Item label="原班次" name="shift">
-            <Select disabled>
-              <Option value="morning">{SHIFT_LABELS.morning}</Option>
-              <Option value="afternoon">{SHIFT_LABELS.afternoon}</Option>
-              <Option value="night">{SHIFT_LABELS.night}</Option>
-            </Select>
-          </Form.Item>
-          <Form.Item label="原巡逻区域" name="areaId">
-            <Select disabled>
-              {areas.map(a => (
-                <Option key={a.id} value={a.id}>{a.name}</Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="调班原因" name="reason" rules={[{ required: true, message: '请输入调班原因' }]}>
-            <Select>
+          <Divider orientation="left" style={{ margin: '8px 0', fontSize: 13 }}>
+            <span style={{ color: '#faad14' }}>原排班信息</span>
+          </Divider>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item label="原排班日期" name="date">
+                <DatePicker style={{ width: '100%' }} disabled />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="原班次" name="shift">
+                <Select disabled>
+                  <Option value="morning">{SHIFT_LABELS.morning}</Option>
+                  <Option value="afternoon">{SHIFT_LABELS.afternoon}</Option>
+                  <Option value="night">{SHIFT_LABELS.night}</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="原巡逻区域" name="areaId">
+                <Select disabled>
+                  {areas.map(a => (
+                    <Option key={a.id} value={a.id}>{a.name}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider orientation="left" style={{ margin: '8px 0', fontSize: 13 }}>
+            <span style={{ color: '#52c41a' }}>目标排班信息（请选择）</span>
+          </Divider>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item
+                label="目标日期"
+                name="targetDate"
+                rules={[{ required: true, message: '请选择目标日期' }]}
+              >
+                <DatePicker style={{ width: '100%' }} placeholder="选择日期" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                label="目标班次"
+                name="targetShift"
+                rules={[{ required: true, message: '请选择目标班次' }]}
+              >
+                <Select placeholder="选择班次">
+                  <Option value="morning">{SHIFT_LABELS.morning}</Option>
+                  <Option value="afternoon">{SHIFT_LABELS.afternoon}</Option>
+                  <Option value="night">{SHIFT_LABELS.night}</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                label="目标辖区"
+                name="targetAreaId"
+                rules={[{ required: true, message: '请选择目标辖区' }]}
+              >
+                <Select placeholder="选择辖区">
+                  {areas.map(a => (
+                    <Option key={a.id} value={a.id}>
+                      {a.name} (<Tag color={riskColor(a.riskLevel)} style={{ margin: 0 }}>{riskLabel(a.riskLevel)}</Tag>)
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item label="调班原因" name="reason" rules={[{ required: true, message: '请选择调班原因' }]}>
+            <Select placeholder="选择原因">
               <Option value="personal">个人事务</Option>
               <Option value="swap">与同事换班</Option>
               <Option value="training">培训学习</Option>
@@ -297,7 +382,7 @@ export default function Schedule() {
             </Select>
           </Form.Item>
           <div style={{ color: '#888', fontSize: 12 }}>
-            ⚠️ 调班申请需经指挥长审批后方可生效，紧急情况请直接致电指挥中心。
+            ⚠️ 调班申请需经指挥长审批后方可生效，批准后排班表将直接更新为目标安排，紧急情况请直接致电指挥中心。
           </div>
         </Form>
       </Modal>

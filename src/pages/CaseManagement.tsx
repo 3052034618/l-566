@@ -35,6 +35,10 @@ export default function CaseManagement() {
   const [evidenceForm] = Form.useForm()
   const [transcriptModal, setTranscriptModal] = useState(false)
   const [evidenceModal, setEvidenceModal] = useState(false)
+  const [transcriptFile, setTranscriptFile] = useState<File | null>(null)
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null)
+  const [transcriptFileList, setTranscriptFileList] = useState<any[]>([])
+  const [evidenceFileList, setEvidenceFileList] = useState<any[]>([])
 
   const filteredCases = cases.filter(c => {
     if (statusFilter && c.status !== statusFilter) return false
@@ -69,7 +73,8 @@ export default function CaseManagement() {
         status: values.status || 'accepted',
         relatedIncidentId: values.relatedIncidentId,
         officerInCharge: values.officerInCharge,
-        acceptedAt: values.acceptedAt ? values.acceptedAt.format() : dayjs().format()
+        acceptedAt: values.acceptedAt ? values.acceptedAt.format() : dayjs().format(),
+        notes: ''
       })
       message.success(`案件 ${newCase.caseNumber} 创建成功`)
       setCreateModal(false)
@@ -89,38 +94,48 @@ export default function CaseManagement() {
     })
   }
 
-  const handleAddTranscript = () => {
-    transcriptForm.validateFields().then(values => {
+  const handleAddTranscript = async () => {
+    try {
+      const values = await transcriptForm.validateFields()
       if (currentCase) {
-        addTranscript(currentCase.id, {
+        await addTranscript(currentCase.id, {
           title: values.title,
           content: values.content,
           uploadedAt: dayjs().format(),
           uploadedBy: '系统管理员'
-        })
+        }, transcriptFile || undefined)
         message.success('笔录上传成功')
         setTranscriptModal(false)
         transcriptForm.resetFields()
+        setTranscriptFile(null)
+        setTranscriptFileList([])
         setCurrentCase(usePoliceStore.getState().cases.find(c => c.id === currentCase.id) || null)
       }
-    })
+    } catch (e) {
+      console.error(e)
+    }
   }
 
-  const handleAddEvidence = () => {
-    evidenceForm.validateFields().then(values => {
+  const handleAddEvidence = async () => {
+    try {
+      const values = await evidenceForm.validateFields()
       if (currentCase) {
-        addEvidence(currentCase.id, {
+        await addEvidence(currentCase.id, {
           name: values.name,
           type: values.type,
           description: values.description,
           uploadedAt: dayjs().format()
-        })
+        }, evidenceFile || undefined)
         message.success('证据添加成功')
         setEvidenceModal(false)
         evidenceForm.resetFields()
+        setEvidenceFile(null)
+        setEvidenceFileList([])
         setCurrentCase(usePoliceStore.getState().cases.find(c => c.id === currentCase.id) || null)
       }
-    })
+    } catch (e) {
+      console.error(e)
+    }
   }
 
   const columns: ColumnsType<Case> = [
@@ -403,11 +418,28 @@ export default function CaseManagement() {
                     >
                       <List.Item.Meta
                         avatar={<FileTextOutlined style={{ fontSize: 20, color: '#1677ff' }} />}
-                        title={t.title}
+                        title={
+                          <Space>
+                            <span>{t.title}</span>
+                            {t.fileName && (
+                              <Tag color="blue" icon={<PaperClipOutlined />}>{t.fileName}</Tag>
+                            )}
+                          </Space>
+                        }
                         description={
-                          <Space size={16}>
+                          <Space size={16} wrap>
                             <span style={{ fontSize: 12 }}>上传人：{t.uploadedBy}</span>
                             <span style={{ fontSize: 12 }}>{dayjs(t.uploadedAt).format('YYYY-MM-DD HH:mm')}</span>
+                            {t.fileType && (
+                              <span style={{ fontSize: 12, color: '#1677ff' }}>
+                                类型：{t.fileType.split('/').pop()?.toUpperCase() || t.fileType}
+                              </span>
+                            )}
+                            {t.fileSize && (
+                              <span style={{ fontSize: 12, color: '#888' }}>
+                                大小：{t.fileSize < 1024 ? `${t.fileSize}B` : t.fileSize < 1024 * 1024 ? `${(t.fileSize / 1024).toFixed(1)}KB` : `${(t.fileSize / 1024 / 1024).toFixed(1)}MB`}
+                              </span>
+                            )}
                           </Space>
                         }
                       />
@@ -454,16 +486,35 @@ export default function CaseManagement() {
                                 e.type === 'audio' ? '🎵' : e.type === 'physical' ? '🔍' : '📄'}
                           </div>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 500 }}>{e.name}</div>
-                            <div style={{ fontSize: 12, color: '#666' }}>
-                              <Tag>{e.type === 'document' ? '文档' :
-                                e.type === 'image' ? '图片' :
-                                  e.type === 'video' ? '视频' :
-                                    e.type === 'audio' ? '音频' : '物证'}</Tag>
-                              {dayjs(e.uploadedAt).format('MM-DD HH:mm')}
+                            <div style={{ fontWeight: 500 }}>
+                              <Space>
+                                <span>{e.name}</span>
+                                {e.fileName && (
+                                  <Tag icon={<PaperClipOutlined />}>{e.fileName}</Tag>
+                                )}
+                              </Space>
+                            </div>
+                            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                              <Space wrap size={8}>
+                                <Tag>{e.type === 'document' ? '文档' :
+                                  e.type === 'image' ? '图片' :
+                                    e.type === 'video' ? '视频' :
+                                      e.type === 'audio' ? '音频' : '物证'}</Tag>
+                                <span>{dayjs(e.uploadedAt).format('YYYY-MM-DD HH:mm')}</span>
+                                {e.fileType && (
+                                  <span style={{ color: '#1677ff' }}>
+                                    {e.fileType.split('/').pop()?.toUpperCase() || e.fileType}
+                                  </span>
+                                )}
+                                {e.fileSize && (
+                                  <span style={{ color: '#888' }}>
+                                    {e.fileSize < 1024 ? `${e.fileSize}B` : e.fileSize < 1024 * 1024 ? `${(e.fileSize / 1024).toFixed(1)}KB` : `${(e.fileSize / 1024 / 1024).toFixed(1)}MB`}
+                                  </span>
+                                )}
+                              </Space>
                             </div>
                             {e.description && (
-                              <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>
+                              <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
                                 {e.description}
                               </div>
                             )}
@@ -482,7 +533,11 @@ export default function CaseManagement() {
       <Modal
         title="上传笔录"
         open={transcriptModal}
-        onCancel={() => setTranscriptModal(false)}
+        onCancel={() => {
+          setTranscriptModal(false)
+          setTranscriptFile(null)
+          setTranscriptFileList([])
+        }}
         onOk={handleAddTranscript}
         okText="确认上传"
       >
@@ -494,9 +549,26 @@ export default function CaseManagement() {
             <TextArea rows={6} placeholder="请输入笔录详细内容..." />
           </Form.Item>
           <Form.Item label="附件（可选）">
-            <Upload>
+            <Upload
+              fileList={transcriptFileList}
+              beforeUpload={(file) => {
+                setTranscriptFile(file)
+                setTranscriptFileList([file])
+                return false
+              }}
+              onRemove={() => {
+                setTranscriptFile(null)
+                setTranscriptFileList([])
+              }}
+              maxCount={1}
+            >
               <Button icon={<UploadOutlined />}>选择文件</Button>
             </Upload>
+            {transcriptFile && (
+              <div style={{ fontSize: 12, color: '#52c41a', marginTop: 8 }}>
+                ✓ 已选择文件：{transcriptFile.name} ({transcriptFile.type || '未知类型'})
+              </div>
+            )}
           </Form.Item>
         </Form>
       </Modal>
@@ -504,7 +576,11 @@ export default function CaseManagement() {
       <Modal
         title="添加证据"
         open={evidenceModal}
-        onCancel={() => setEvidenceModal(false)}
+        onCancel={() => {
+          setEvidenceModal(false)
+          setEvidenceFile(null)
+          setEvidenceFileList([])
+        }}
         onOk={handleAddEvidence}
         okText="确认添加"
       >
@@ -525,9 +601,26 @@ export default function CaseManagement() {
             <TextArea rows={3} placeholder="请详细描述证据..." />
           </Form.Item>
           <Form.Item label="上传文件">
-            <Upload>
+            <Upload
+              fileList={evidenceFileList}
+              beforeUpload={(file) => {
+                setEvidenceFile(file)
+                setEvidenceFileList([file])
+                return false
+              }}
+              onRemove={() => {
+                setEvidenceFile(null)
+                setEvidenceFileList([])
+              }}
+              maxCount={1}
+            >
               <Button icon={<UploadOutlined />}>选择文件</Button>
             </Upload>
+            {evidenceFile && (
+              <div style={{ fontSize: 12, color: '#52c41a', marginTop: 8 }}>
+                ✓ 已选择文件：{evidenceFile.name} ({evidenceFile.type || '未知类型'})
+              </div>
+            )}
           </Form.Item>
         </Form>
       </Modal>
