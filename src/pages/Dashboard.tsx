@@ -300,7 +300,7 @@ export default function Dashboard() {
                     <Card
                       size="small"
                       hoverable
-                      onClick={() => navigate('/incidents')}
+                      onClick={() => navigate(`/incidents?id=${op.incident.id}&joint=1`)}
                       style={{
                         cursor: 'pointer',
                         borderTop: `3px solid ${op.isCurrentNodeOverdue ? '#cf1322' : '#1677ff'}`,

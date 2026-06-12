@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import {
   Incident, PoliceVehicle, PoliceOfficer, Camera, Case, Schedule, Area, Alert, TaskAssignment,
   IncidentType, PriorityLevel, IncidentStatus, CaseStatus, CameraAlertLog,
-  JointDisposalUnit, DisposalNode, AssignmentLog, AssignmentLogType
+  JointDisposalUnit, DisposalNode, AssignmentLog, AssignmentLogType,
+  CollaborationCommand, CommandFeedback, CommandStatus, CommandPriority, UnitCategory
 } from '../types'
 import {
   mockAreas, mockOfficers, mockVehicles, mockCameras, mockIncidents, mockCases, mockAlerts,
@@ -48,8 +49,14 @@ interface PoliceStore {
   addAssignmentLog: (incidentId: string, log: Omit<AssignmentLog, 'id' | 'operatedAt'>) => void
   verifyTransfer: (incidentId: string, passed: boolean, comments?: string) => void
   addDisposalNode: (incidentId: string, nodeName: string) => void
-  markUnitArrived: (incidentId: string, unitId: string) => void
+  markUnitArrived: (incidentId: string, unitId: string, confirmedBy?: string) => void
   getActiveJointOperations: () => Incident[]
+
+  issueCommand: (incidentId: string, unitId: string, unitName: string, unitCategory: UnitCategory, content: string, priority: CommandPriority, issuedBy: string, deadline?: string) => void
+  updateCommandStatus: (incidentId: string, commandId: string, status: CommandStatus) => void
+  addCommandFeedback: (incidentId: string, commandId: string, status: CommandStatus, content: string, providedBy: string) => void
+  updateUnitStatus: (incidentId: string, unitId: string, status: JointDisposalUnit['status']) => void
+  updateUnitFeedback: (incidentId: string, unitId: string, feedback: string, providedBy: string) => void
 
   addCase: (data: Omit<Case, 'id' | 'transcripts' | 'evidences' | 'isOverdue'>) => Case
   updateCaseStatus: (id: string, status: CaseStatus) => void
@@ -437,6 +444,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       id: uuidv4(),
       unitName: '主责处置组',
       role: 'primary',
+      unitCategory: 'patrol',
       vehicleId: incident.assignedVehicleId || '',
       vehiclePlate: primaryVehicle?.plateNumber || '',
       officerIds: [...incident.assignedOfficerIds],
@@ -444,6 +452,8 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       status: incident.status === 'en_route' || incident.status === 'handling' ? 'handling' : 'en_route',
       eta: 0,
       arrivedAt: incident.arrivedAt,
+      confirmedArrivedAt: incident.arrivedAt,
+      confirmedArrivedBy: '指挥中心',
       task: '现场指挥与主要处置'
     }
 
@@ -570,7 +580,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
     get().persist()
   },
 
-  markUnitArrived: (incidentId, unitId) => {
+  markUnitArrived: (incidentId, unitId, confirmedBy = '指挥中心') => {
     set(state => ({
       incidents: state.incidents.map(i => {
         if (i.id !== incidentId) return i
@@ -578,7 +588,13 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
           ...i,
           jointUnits: (i.jointUnits || []).map(u => {
             if (u.id !== unitId) return u
-            return { ...u, status: 'arrived' as const, arrivedAt: dayjs().format() }
+            return {
+              ...u,
+              status: 'arrived' as const,
+              arrivedAt: dayjs().format(),
+              confirmedArrivedAt: dayjs().format(),
+              confirmedArrivedBy: confirmedBy
+            }
           })
         }
       })
@@ -591,6 +607,125 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
     return state.incidents.filter(i =>
       i.isJointOperation && i.status !== 'closed'
     )
+  },
+
+  issueCommand: (incidentId, unitId, unitName, unitCategory, content, priority, issuedBy, deadline) => {
+    const newCommand: CollaborationCommand = {
+      id: uuidv4(),
+      incidentId,
+      unitId,
+      unitName,
+      unitCategory,
+      content,
+      priority,
+      status: 'sent',
+      issuedBy,
+      issuedAt: dayjs().format(),
+      deadline,
+      feedbacks: []
+    }
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        return {
+          ...i,
+          commands: [...(i.commands || []), newCommand]
+        }
+      })
+    }))
+    get().persist()
+  },
+
+  updateCommandStatus: (incidentId, commandId, status) => {
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        return {
+          ...i,
+          commands: (i.commands || []).map(c => {
+            if (c.id !== commandId) return c
+            return { ...c, status }
+          })
+        }
+      })
+    }))
+    get().persist()
+  },
+
+  addCommandFeedback: (incidentId, commandId, status, content, providedBy) => {
+    const feedback: CommandFeedback = {
+      id: uuidv4(),
+      commandId,
+      status,
+      content,
+      providedBy,
+      providedAt: dayjs().format()
+    }
+    let targetUnitId = ''
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        const updatedCommands = (i.commands || []).map(c => {
+          if (c.id !== commandId) return c
+          targetUnitId = c.unitId
+          return {
+            ...c,
+            status,
+            feedbacks: [...c.feedbacks, feedback]
+          }
+        })
+        const updatedUnits = (i.jointUnits || []).map(u => {
+          if (u.id !== targetUnitId) return u
+          return {
+            ...u,
+            lastFeedback: content,
+            lastFeedbackAt: dayjs().format()
+          }
+        })
+        return {
+          ...i,
+          commands: updatedCommands,
+          jointUnits: updatedUnits
+        }
+      })
+    }))
+    get().persist()
+  },
+
+  updateUnitStatus: (incidentId, unitId, status) => {
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        return {
+          ...i,
+          jointUnits: (i.jointUnits || []).map(u => {
+            if (u.id !== unitId) return u
+            return { ...u, status }
+          })
+        }
+      })
+    }))
+    get().persist()
+  },
+
+  updateUnitFeedback: (incidentId, unitId, feedback, providedBy) => {
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        return {
+          ...i,
+          jointUnits: (i.jointUnits || []).map(u => {
+            if (u.id !== unitId) return u
+            return {
+              ...u,
+              lastFeedback: feedback,
+              lastFeedbackAt: dayjs().format()
+            }
+          })
+        }
+      })
+    }))
+    get().persist()
   },
 
   addAssignmentLog: (incidentId, log) => {

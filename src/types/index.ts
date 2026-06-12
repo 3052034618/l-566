@@ -6,6 +6,9 @@ export type TransferStatus = 'pending' | 'approved' | 'rejected'
 export type ScheduleChangeStatus = 'pending' | 'approved' | 'rejected'
 export type UnitRole = 'primary' | 'reinforcement'
 export type AssignmentLogType = 'dispatch' | 'transfer_request' | 'transfer_approved' | 'transfer_rejected' | 'acceptance' | 'reinforcement'
+export type CommandStatus = 'sent' | 'received' | 'in_progress' | 'completed'
+export type CommandPriority = 'normal' | 'urgent' | 'critical'
+export type UnitCategory = 'patrol' | 'swat' | 'traffic' | 'tech' | 'fire' | 'medical' | 'other'
 
 export interface Incident {
   id: string
@@ -33,6 +36,7 @@ export interface Incident {
   assignmentLogs?: AssignmentLog[]
   onSiteDivision?: string
   onSiteDivisionHistory?: OnSiteDivisionChange[]
+  commands?: CollaborationCommand[]
 }
 
 export interface OnSiteDivisionChange {
@@ -195,6 +199,7 @@ export interface JointDisposalUnit {
   id: string
   unitName: string
   role: UnitRole
+  unitCategory: UnitCategory
   vehicleId: string
   vehiclePlate: string
   officerIds: string[]
@@ -202,7 +207,11 @@ export interface JointDisposalUnit {
   status: 'en_route' | 'arrived' | 'handling' | 'completed'
   eta?: number
   arrivedAt?: string
+  confirmedArrivedAt?: string
+  confirmedArrivedBy?: string
   task: string
+  lastFeedback?: string
+  lastFeedbackAt?: string
 }
 
 export interface DisposalNode {
@@ -229,4 +238,29 @@ export interface AssignmentLog {
   reason?: string
   approvalComments?: string
   approvedBy?: string
+}
+
+export interface CollaborationCommand {
+  id: string
+  incidentId: string
+  unitId: string
+  unitName: string
+  unitCategory: UnitCategory
+  content: string
+  priority: CommandPriority
+  status: CommandStatus
+  issuedBy: string
+  issuedAt: string
+  deadline?: string
+  feedbacks: CommandFeedback[]
+}
+
+export interface CommandFeedback {
+  id: string
+  commandId: string
+  status: CommandStatus
+  content: string
+  providedBy: string
+  providedAt: string
+  attachments?: Array<{ name: string; type: string; url: string }>
 }

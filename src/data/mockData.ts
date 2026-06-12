@@ -1,5 +1,6 @@
 import {
-  Incident, PoliceVehicle, PoliceOfficer, Camera, Case, Schedule, Area, Alert
+  Incident, PoliceVehicle, PoliceOfficer, Camera, Case, Schedule, Area, Alert,
+  JointDisposalUnit, DisposalNode, OnSiteDivisionChange, CollaborationCommand
 } from '../types'
 import { v4 as uuidv4 } from 'uuid'
 import dayjs from 'dayjs'
@@ -58,9 +59,101 @@ export const mockIncidents: Incident[] = [
   },
   {
     id: 'i2', callerName: '匿名群众', callerPhone: '110', location: '东三环北路15号', coordinates: [39.9400, 116.4500],
-    description: '两伙人发生口角，有聚众斗殴倾向', type: 'public_order', priority: 5, status: 'en_route',
-    reportedAt: dayjs().subtract(8, 'minute').format(), dispatchedAt: dayjs().subtract(6, 'minute').format(),
-    assignedVehicleId: 'v3', assignedOfficerIds: ['o5', 'o6'], notes: [], cameraIds: ['c6']
+    description: '两伙人发生口角，有聚众斗殴倾向', type: 'public_order', priority: 5, status: 'handling',
+    reportedAt: dayjs().subtract(25, 'minute').format(), dispatchedAt: dayjs().subtract(23, 'minute').format(),
+    arrivedAt: dayjs().subtract(18, 'minute').format(), assignedVehicleId: 'v3', assignedOfficerIds: ['o5', 'o6'],
+    notes: ['双方约20人，已报警多次'], cameraIds: ['c6'],
+    isJointOperation: true,
+    jointUnits: [
+      {
+        id: 'u1', unitName: '主责处置组', role: 'primary', unitCategory: 'patrol',
+        vehicleId: 'v3', vehiclePlate: '京A·20001',
+        officerIds: ['o5', 'o6'], officerNames: ['孙志强', '周明辉'],
+        status: 'handling', eta: 0,
+        arrivedAt: dayjs().subtract(18, 'minute').format(),
+        confirmedArrivedAt: dayjs().subtract(18, 'minute').format(),
+        confirmedArrivedBy: '指挥中心',
+        task: '现场控制与秩序维护',
+        lastFeedback: '已到达现场，正在隔离双方',
+        lastFeedbackAt: dayjs().subtract(15, 'minute').format()
+      },
+      {
+        id: 'u2', unitName: '增援一组', role: 'reinforcement', unitCategory: 'swat',
+        vehicleId: 'v6', vehiclePlate: '京A·30001',
+        officerIds: ['o9'], officerNames: ['陈海涛'],
+        status: 'arrived', eta: 5,
+        arrivedAt: dayjs().subtract(10, 'minute').format(),
+        confirmedArrivedAt: dayjs().subtract(10, 'minute').format(),
+        confirmedArrivedBy: '指挥中心',
+        task: '协助控制重点人员',
+        lastFeedback: '已到现场，协助隔离'
+      },
+      {
+        id: 'u3', unitName: '增援二组', role: 'reinforcement', unitCategory: 'traffic',
+        vehicleId: 'v5', vehiclePlate: '京A·10004',
+        officerIds: ['o10'], officerNames: ['黄晓东'],
+        status: 'en_route', eta: 8,
+        task: '周边交通疏导'
+      },
+      {
+        id: 'u4', unitName: '技侦支援', role: 'reinforcement', unitCategory: 'tech',
+        vehicleId: 'v2', vehiclePlate: '京A·10002',
+        officerIds: ['o3', 'o4'], officerNames: ['王建军', '赵学峰'],
+        status: 'en_route', eta: 12,
+        task: '现场取证与视频提取'
+      }
+    ] as JointDisposalUnit[],
+    disposalNodes: [
+      { id: 'n1', name: '接警响应', status: 'completed', startedAt: dayjs().subtract(25, 'minute').format(), completedAt: dayjs().subtract(24, 'minute').format(), completedBy: '指挥中心', expectedDurationMin: 2 },
+      { id: 'n2', name: '警力部署', status: 'completed', startedAt: dayjs().subtract(24, 'minute').format(), completedAt: dayjs().subtract(22, 'minute').format(), completedBy: '指挥长', expectedDurationMin: 5 },
+      { id: 'n3', name: '现场控制', status: 'in_progress', startedAt: dayjs().subtract(18, 'minute').format(), completedBy: '孙志强', expectedDurationMin: 15 },
+      { id: 'n4', name: '调查取证', status: 'pending', expectedDurationMin: 30 },
+      { id: 'n5', name: '人员移交', status: 'pending', expectedDurationMin: 10 },
+      { id: 'n6', name: '现场清理', status: 'pending', expectedDurationMin: 8 }
+    ] as DisposalNode[],
+    onSiteDivision: '主责组：现场控制隔离双方；增援一组：带离挑头人员；增援二组：周边交通疏导；技侦：视频提取与电子取证',
+    onSiteDivisionHistory: [
+      {
+        id: 'd1', changedAt: dayjs().subtract(20, 'minute').format(), changedBy: '指挥长',
+        beforeContent: '主责组：现场处置；增援：待命',
+        afterContent: '主责组：现场控制隔离双方；增援一组：协助带离；增援二组：交通疏导；技侦：现场取证'
+      }
+    ] as OnSiteDivisionChange[],
+    commands: [
+      {
+        id: 'cmd1', incidentId: 'i2', unitId: 'u1', unitName: '主责处置组', unitCategory: 'patrol',
+        content: '立即前往现场，隔离冲突双方，避免事态升级', priority: 'critical', status: 'completed',
+        issuedBy: '指挥长', issuedAt: dayjs().subtract(23, 'minute').format(),
+        feedbacks: [
+          { id: 'f1', commandId: 'cmd1', status: 'received', content: '收到，立即出发', providedBy: '孙志强', providedAt: dayjs().subtract(22, 'minute').format() },
+          { id: 'f2', commandId: 'cmd1', status: 'in_progress', content: '已到达现场，正在隔离双方', providedBy: '孙志强', providedAt: dayjs().subtract(18, 'minute').format() },
+          { id: 'f3', commandId: 'cmd1', status: 'completed', content: '双方已隔离，无人员受伤', providedBy: '孙志强', providedAt: dayjs().subtract(15, 'minute').format() }
+        ]
+      },
+      {
+        id: 'cmd2', incidentId: 'i2', unitId: 'u2', unitName: '增援一组', unitCategory: 'swat',
+        content: '立即前往现场增援，协助控制重点人员', priority: 'urgent', status: 'completed',
+        issuedBy: '指挥长', issuedAt: dayjs().subtract(20, 'minute').format(),
+        feedbacks: [
+          { id: 'f4', commandId: 'cmd2', status: 'received', content: '收到，正在前往', providedBy: '陈海涛', providedAt: dayjs().subtract(19, 'minute').format() },
+          { id: 'f5', commandId: 'cmd2', status: 'completed', content: '已到现场，协助隔离中', providedBy: '陈海涛', providedAt: dayjs().subtract(10, 'minute').format() }
+        ]
+      },
+      {
+        id: 'cmd3', incidentId: 'i2', unitId: 'u3', unitName: '增援二组', unitCategory: 'traffic',
+        content: '前往现场周边疏导交通，确保救援通道畅通', priority: 'urgent', status: 'in_progress',
+        issuedBy: '指挥长', issuedAt: dayjs().subtract(15, 'minute').format(),
+        feedbacks: [
+          { id: 'f6', commandId: 'cmd3', status: 'received', content: '收到，预计8分钟到达', providedBy: '黄晓东', providedAt: dayjs().subtract(14, 'minute').format() }
+        ]
+      },
+      {
+        id: 'cmd4', incidentId: 'i2', unitId: 'u4', unitName: '技侦支援', unitCategory: 'tech',
+        content: '携带取证设备前往，提取现场周边监控视频', priority: 'normal', status: 'sent',
+        issuedBy: '指挥长', issuedAt: dayjs().subtract(10, 'minute').format(),
+        feedbacks: []
+      }
+    ] as CollaborationCommand[]
   },
   {
     id: 'i3', callerName: '李大爷', callerPhone: '13700002222', location: '西城区幸福小区3号楼', coordinates: [39.9200, 116.3800],
@@ -70,8 +163,78 @@ export const mockIncidents: Incident[] = [
   },
   {
     id: 'i4', callerName: '赵经理', callerPhone: '13600003333', location: '中心商务区金融大厦A座', coordinates: [39.9085, 116.4600],
-    description: '收到匿名恐吓邮件，声称放置爆炸物', type: 'criminal', priority: 5, status: 'dispatched',
-    reportedAt: dayjs().subtract(3, 'minute').format(), assignedOfficerIds: [], notes: [], cameraIds: ['c5']
+    description: '收到匿名恐吓邮件，声称放置爆炸物', type: 'criminal', priority: 5, status: 'en_route',
+    reportedAt: dayjs().subtract(12, 'minute').format(), dispatchedAt: dayjs().subtract(10, 'minute').format(),
+    assignedVehicleId: 'v1', assignedOfficerIds: ['o1', 'o2'], notes: ['已通知排爆组'], cameraIds: ['c5'],
+    isJointOperation: true,
+    jointUnits: [
+      {
+        id: 'u1', unitName: '主责处置组', role: 'primary', unitCategory: 'patrol',
+        vehicleId: 'v1', vehiclePlate: '京A·10001',
+        officerIds: ['o1', 'o2'], officerNames: ['张建国', '李卫东'],
+        status: 'en_route', eta: 3,
+        task: '人员疏散与现场警戒',
+      },
+      {
+        id: 'u2', unitName: '排爆组', role: 'reinforcement', unitCategory: 'swat',
+        vehicleId: 'v3', vehiclePlate: '京A·20001',
+        officerIds: ['o5', 'o6'], officerNames: ['孙志强', '周明辉'],
+        status: 'en_route', eta: 8,
+        task: '爆炸物排查与处置'
+      },
+      {
+        id: 'u3', unitName: '交警疏导', role: 'reinforcement', unitCategory: 'traffic',
+        vehicleId: 'v4', vehiclePlate: '京A·10003',
+        officerIds: ['o7', 'o8'], officerNames: ['吴振华', '郑丽华'],
+        status: 'en_route', eta: 5,
+        task: '周边交通管制与人员引导'
+      },
+      {
+        id: 'u4', unitName: '技侦追踪', role: 'reinforcement', unitCategory: 'tech',
+        vehicleId: 'v5', vehiclePlate: '京A·10004',
+        officerIds: ['o9', 'o10'], officerNames: ['陈海涛', '黄晓东'],
+        status: 'en_route', eta: 10,
+        task: '邮件溯源与嫌疑人定位'
+      },
+      {
+        id: 'u5', unitName: '医疗救护', role: 'reinforcement', unitCategory: 'medical',
+        vehicleId: 'v6', vehiclePlate: '京A·30001',
+        officerIds: [], officerNames: [],
+        status: 'en_route', eta: 7,
+        task: '医疗急救待命'
+      }
+    ] as JointDisposalUnit[],
+    disposalNodes: [
+      { id: 'n1', name: '接警响应', status: 'completed', startedAt: dayjs().subtract(12, 'minute').format(), completedAt: dayjs().subtract(11, 'minute').format(), completedBy: '指挥中心', expectedDurationMin: 2 },
+      { id: 'n2', name: '警力部署', status: 'in_progress', startedAt: dayjs().subtract(11, 'minute').format(), completedBy: '指挥长', expectedDurationMin: 5 },
+      { id: 'n3', name: '人员疏散', status: 'pending', expectedDurationMin: 15 },
+      { id: 'n4', name: '爆炸物排查', status: 'pending', expectedDurationMin: 45 },
+      { id: 'n5', name: '现场取证', status: 'pending', expectedDurationMin: 30 },
+      { id: 'n6', name: '现场解封', status: 'pending', expectedDurationMin: 10 }
+    ] as DisposalNode[],
+    onSiteDivision: '主责组：警戒疏散；排爆组：爆炸物排查；交警：交通管制；技侦：邮件溯源；医疗：急救待命',
+    commands: [
+      {
+        id: 'cmd1', incidentId: 'i4', unitId: 'u1', unitName: '主责处置组', unitCategory: 'patrol',
+        content: '立即前往金融大厦，疏散楼内人员，设置警戒带', priority: 'critical', status: 'in_progress',
+        issuedBy: '指挥长', issuedAt: dayjs().subtract(10, 'minute').format(),
+        feedbacks: [
+          { id: 'f1', commandId: 'cmd1', status: 'received', content: '收到，正在前往', providedBy: '张建国', providedAt: dayjs().subtract(9, 'minute').format() }
+        ]
+      },
+      {
+        id: 'cmd2', incidentId: 'i4', unitId: 'u2', unitName: '排爆组', unitCategory: 'swat',
+        content: '携带排爆设备前往，优先排查邮件提及区域', priority: 'critical', status: 'sent',
+        issuedBy: '指挥长', issuedAt: dayjs().subtract(9, 'minute').format(),
+        feedbacks: []
+      },
+      {
+        id: 'cmd3', incidentId: 'i4', unitId: 'u3', unitName: '交警疏导', unitCategory: 'traffic',
+        content: '对周边道路实施临时交通管制，禁止无关车辆进入', priority: 'urgent', status: 'sent',
+        issuedBy: '指挥长', issuedAt: dayjs().subtract(8, 'minute').format(),
+        feedbacks: []
+      }
+    ] as CollaborationCommand[]
   },
   {
     id: 'i5', callerName: '张先生', callerPhone: '13500004444', location: '南城区菜市场东门', coordinates: [39.8800, 116.4000],

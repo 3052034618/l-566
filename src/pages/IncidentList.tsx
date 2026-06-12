@@ -1,19 +1,24 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Card, Table, Tag, Space, Button, Input, Select, DatePicker, Modal, Drawer, Descriptions,
-  Timeline, Divider, Form, message, List, Progress, Tooltip, Row, Col, Steps, Empty
+  Timeline, Divider, Form, message, List, Progress, Tooltip, Row, Col, Steps, Empty,
+  Alert, Badge
 } from 'antd'
 import {
   EyeOutlined, ThunderboltOutlined, FileAddOutlined, SafetyOutlined, AlertOutlined,
   SafetyCertificateOutlined, RiseOutlined, TeamOutlined, CarOutlined, CheckCircleOutlined,
-  ClockCircleOutlined, FileTextOutlined, PlusOutlined, CloseOutlined
+  ClockCircleOutlined, FileTextOutlined, PlusOutlined, CloseOutlined, SendOutlined,
+  MessageOutlined, ExclamationCircleOutlined, EnvironmentOutlined, VideoCameraOutlined
 } from '@ant-design/icons'
 import { usePoliceStore } from '../store/policeStore'
 import { INCIDENT_TYPE_LABELS, INCIDENT_STATUS_LABELS, PRIORITY_LABELS } from '../data/mockData'
 import dayjs from 'dayjs'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
-import type { Incident, AssignmentLog, JointDisposalUnit } from '../types'
+import type {
+  Incident, AssignmentLog, JointDisposalUnit,
+  CollaborationCommand, CommandFeedback, UnitCategory, CommandPriority
+} from '../types'
 
 const { RangePicker } = DatePicker
 const { Option } = Select
@@ -28,6 +33,11 @@ export default function IncidentList() {
   const updateDisposalNode = usePoliceStore(s => s.updateDisposalNode)
   const updateOnSiteDivision = usePoliceStore(s => s.updateOnSiteDivision)
   const verifyTransfer = usePoliceStore(s => s.verifyTransfer)
+  const markUnitArrived = usePoliceStore(s => s.markUnitArrived)
+  const issueCommand = usePoliceStore(s => s.issueCommand)
+  const addCommandFeedback = usePoliceStore(s => s.addCommandFeedback)
+  const updateUnitStatus = usePoliceStore(s => s.updateUnitStatus)
+  const updateUnitFeedback = usePoliceStore(s => s.updateUnitFeedback)
   const [typeFilter, setTypeFilter] = useState<string | undefined>()
   const [statusFilter, setStatusFilter] = useState<string | undefined>()
   const [keyword, setKeyword] = useState('')
@@ -37,8 +47,31 @@ export default function IncidentList() {
   const [divisionForm] = Form.useForm()
   const [reinforcementModal, setReinforcementModal] = useState(false)
   const [reinforcementForm] = Form.useForm()
+  const [commandForm] = Form.useForm()
+  const [feedbackForm] = Form.useForm()
+  const [commandModal, setCommandModal] = useState(false)
+  const [feedbackModal, setFeedbackModal] = useState(false)
+  const [selectedCommand, setSelectedCommand] = useState<CollaborationCommand | null>(null)
+  const [activeDetailTab, setActiveDetailTab] = useState<'basic' | 'commands'>('basic')
+  const [searchParams, setSearchParams] = useSearchParams()
   const addNoteToIncident = usePoliceStore(s => s.addNoteToIncident)
   const navigate = useNavigate()
+  const location = useLocation()
+
+  useEffect(() => {
+    const incidentId = searchParams.get('id')
+    if (incidentId && !detailVisible) {
+      const incident = incidents.find(i => i.id === incidentId)
+      if (incident) {
+        setCurrentIncident(incident)
+        setDetailVisible(true)
+        const highlightJoint = searchParams.get('joint') === '1'
+        if (highlightJoint) {
+          setActiveDetailTab('commands')
+        }
+      }
+    }
+  }, [searchParams, incidents, detailVisible])
 
   const filteredIncidents = incidents.filter(i => {
     if (typeFilter && i.type !== typeFilter) return false
@@ -118,6 +151,7 @@ export default function IncidentList() {
       addReinforcementUnit(currentIncident.id, {
         unitName: values.unitName,
         role: 'reinforcement',
+        unitCategory: values.unitCategory || 'other',
         vehicleId: values.vehicleId,
         vehiclePlate: vehicle?.plateNumber || '',
         officerIds: values.officerIds,
@@ -161,6 +195,105 @@ export default function IncidentList() {
       message.success('现场分工已更新')
       setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
     })
+  }
+
+  const handleMarkUnitArrived = (unitId: string) => {
+    if (!currentIncident) return
+    Modal.confirm({
+      title: '确认增援到场',
+      content: '确认该增援单位已到达现场？',
+      onOk: () => {
+        markUnitArrived(currentIncident.id, unitId, '指挥中心')
+        message.success('已确认到场')
+        setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+      }
+    })
+  }
+
+  const handleOpenCommandModal = () => {
+    commandForm.resetFields()
+    setCommandModal(true)
+  }
+
+  const handleIssueCommand = () => {
+    commandForm.validateFields().then(values => {
+      if (!currentIncident) return
+      const unit = (currentIncident.jointUnits || []).find(u => u.id === values.unitId)
+      if (!unit) return
+      issueCommand(
+        currentIncident.id,
+        unit.id,
+        unit.unitName,
+        values.unitCategory || unit.unitCategory || 'other',
+        values.content,
+        values.priority,
+        '指挥长',
+        values.deadline ? dayjs(values.deadline).format() : undefined
+      )
+      message.success('指令已下发')
+      setCommandModal(false)
+      commandForm.resetFields()
+      setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+    })
+  }
+
+  const handleOpenFeedbackModal = (cmd: CollaborationCommand) => {
+    feedbackForm.resetFields()
+    setSelectedCommand(cmd)
+    setFeedbackModal(true)
+  }
+
+  const handleAddFeedback = () => {
+    feedbackForm.validateFields().then(values => {
+      if (!currentIncident || !selectedCommand) return
+      addCommandFeedback(
+        currentIncident.id,
+        selectedCommand.id,
+        values.status,
+        values.content,
+        '现场指挥员'
+      )
+      message.success('反馈已提交')
+      setFeedbackModal(false)
+      feedbackForm.resetFields()
+      setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+    })
+  }
+
+  const getCommandStatusLabel = (status: string) => {
+    const map: Record<string, string> = {
+      sent: '已下发', received: '已接收', in_progress: '执行中', completed: '已完成'
+    }
+    return map[status] || status
+  }
+
+  const getCommandStatusColor = (status: string) => {
+    const map: Record<string, string> = {
+      sent: 'default', received: 'blue', in_progress: 'processing', completed: 'success'
+    }
+    return map[status] || 'default'
+  }
+
+  const getPriorityLabel = (p: string) => {
+    const map: Record<string, string> = {
+      normal: '普通', urgent: '紧急', critical: '特急'
+    }
+    return map[p] || p
+  }
+
+  const getPriorityColor = (p: string) => {
+    const map: Record<string, string> = {
+      normal: 'default', urgent: 'orange', critical: 'red'
+    }
+    return map[p] || 'default'
+  }
+
+  const getUnitCategoryLabel = (c: string) => {
+    const map: Record<string, string> = {
+      patrol: '巡警', swat: '特警', traffic: '交警', tech: '技侦',
+      fire: '消防', medical: '医疗', other: '其他'
+    }
+    return map[c] || c
   }
 
   const getLogTypeLabel = (type: AssignmentLog['type']) => {
@@ -397,8 +530,13 @@ export default function IncidentList() {
                       actions={[
                         <Tag key="role" color={unit.role === 'primary' ? 'red' : 'blue'}>
                           {unit.role === 'primary' ? '主责' : '增援'}
-                        </Tag>
-                      ]}
+                        </Tag>,
+                        unit.status === 'en_route' && currentIncident.status !== 'closed' && (
+                          <Button key="arrived" size="small" type="primary" onClick={() => handleMarkUnitArrived(unit.id)}>
+                            确认到场
+                          </Button>
+                        )
+                      ].filter(Boolean) as any[]}
                     >
                       <List.Item.Meta
                         avatar={
@@ -415,6 +553,7 @@ export default function IncidentList() {
                         title={
                           <Space>
                             <span style={{ fontWeight: 500 }}>{unit.unitName}</span>
+                            <Tag color="purple">{getUnitCategoryLabel(unit.unitCategory || 'other')}</Tag>
                             <Tag color={
                               unit.status === 'arrived' ? 'green' :
                               unit.status === 'handling' ? 'blue' :
@@ -433,17 +572,33 @@ export default function IncidentList() {
                               {unit.vehiclePlate}
                               <span style={{ margin: '0 8px' }}>|</span>
                               <TeamOutlined style={{ marginRight: 4 }} />
-                              {unit.officerNames.join('、')}
+                              {unit.officerNames.length > 0 ? unit.officerNames.join('、') : '待指派'}
                             </div>
                             <div style={{ color: '#888' }}>
                               任务：{unit.task}
                               {unit.eta !== undefined && unit.status === 'en_route' && (
-                                <span style={{ marginLeft: 8 }}>预计 {unit.eta} 分钟到达</span>
+                                <span style={{ marginLeft: 8, color: '#fa8c16' }}>预计 {unit.eta} 分钟到达</span>
                               )}
-                              {unit.arrivedAt && (
-                                <span style={{ marginLeft: 8 }}>到场时间：{dayjs(unit.arrivedAt).format('HH:mm')}</span>
+                              {unit.confirmedArrivedAt && (
+                                <span style={{ marginLeft: 8, color: '#52c41a' }}>
+                                  到场：{dayjs(unit.confirmedArrivedAt).format('HH:mm:ss')}（{unit.confirmedArrivedBy}确认）
+                                </span>
                               )}
                             </div>
+                            {unit.lastFeedback && (
+                              <div style={{
+                                marginTop: 6, padding: '6px 10px', background: '#f6ffed',
+                                borderLeft: '3px solid #52c41a', borderRadius: 2
+                              }}>
+                                <span style={{ color: '#52c41a', fontWeight: 500 }}>最近反馈：</span>
+                                {unit.lastFeedback}
+                                {unit.lastFeedbackAt && (
+                                  <span style={{ color: '#999', marginLeft: 8 }}>
+                                    {dayjs(unit.lastFeedbackAt).format('HH:mm')}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         }
                       />
@@ -541,6 +696,98 @@ export default function IncidentList() {
                   >
                     {currentIncident.onSiteDivision ? '编辑分工' : '+ 添加现场分工'}
                   </Button>
+                )}
+
+                <Divider orientation="left">
+                  <Space>
+                    <SendOutlined style={{ color: '#1890ff' }} />
+                    <span>协作指令流</span>
+                    <Tag color="blue">{currentIncident.commands?.length || 0} 条</Tag>
+                  </Space>
+                </Divider>
+
+                {currentIncident.status !== 'closed' && (
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    style={{ marginBottom: 12 }}
+                    onClick={handleOpenCommandModal}
+                  >
+                    下发指令
+                  </Button>
+                )}
+
+                {(currentIncident.commands && currentIncident.commands.length > 0) ? (
+                  <Timeline
+                    mode="left"
+                    items={[...currentIncident.commands].reverse().map(cmd => ({
+                      color: cmd.status === 'completed' ? 'green' : cmd.status === 'in_progress' ? 'blue' : cmd.status === 'received' ? 'orange' : 'gray',
+                      label: (
+                        <div style={{ fontSize: 12, color: '#999' }}>
+                          {dayjs(cmd.issuedAt).format('HH:mm:ss')}
+                        </div>
+                      ),
+                      children: (
+                        <Card size="small" style={{ marginBottom: 8 }}>
+                          <Space style={{ marginBottom: 8, width: '100%', justifyContent: 'space-between' }}>
+                            <Space>
+                              <Tag color={getPriorityColor(cmd.priority)}>
+                                {getPriorityLabel(cmd.priority)}
+                              </Tag>
+                              <Tag color="purple">{getUnitCategoryLabel(cmd.unitCategory)}</Tag>
+                              <span style={{ fontWeight: 500 }}>{cmd.unitName}</span>
+                            </Space>
+                            <Space>
+                              <Tag color={getCommandStatusColor(cmd.status)}>
+                                {getCommandStatusLabel(cmd.status)}
+                              </Tag>
+                              {currentIncident.status !== 'closed' && cmd.status !== 'completed' && (
+                                <Button size="small" type="link" onClick={() => handleOpenFeedbackModal(cmd)}>
+                                  <MessageOutlined /> 回传反馈
+                                </Button>
+                              )}
+                            </Space>
+                          </Space>
+                          <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 8 }}>
+                            {cmd.content}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#999', marginBottom: 8 }}>
+                            下发人：{cmd.issuedBy}
+                            {cmd.deadline && (
+                              <span style={{ marginLeft: 16 }}>
+                                截止：{dayjs(cmd.deadline).format('MM-DD HH:mm')}
+                              </span>
+                            )}
+                          </div>
+                          {cmd.feedbacks.length > 0 && (
+                            <div style={{
+                              marginTop: 8, padding: '8px 12px', background: '#f6ffed',
+                              borderRadius: 4, borderLeft: '3px solid #52c41a'
+                            }}>
+                              <div style={{ fontSize: 12, fontWeight: 500, color: '#52c41a', marginBottom: 4 }}>
+                                反馈记录
+                              </div>
+                              {cmd.feedbacks.map((fb: CommandFeedback, idx: number) => (
+                                <div key={fb.id} style={{ fontSize: 12, marginBottom: idx < cmd.feedbacks.length - 1 ? 6 : 0 }}>
+                                  <Space>
+                                    <Tag color={getCommandStatusColor(fb.status)}>
+                                      {getCommandStatusLabel(fb.status)}
+                                    </Tag>
+                                    <span style={{ color: '#666' }}>{fb.content}</span>
+                                  </Space>
+                                  <div style={{ color: '#999', marginTop: 2 }}>
+                                    {fb.providedBy} · {dayjs(fb.providedAt).format('HH:mm:ss')}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      )
+                    }))}
+                  />
+                ) : (
+                  <Empty description="暂无指令" image={Empty.PRESENTED_IMAGE_SIMPLE} />
                 )}
               </>
             )}
@@ -653,9 +900,26 @@ export default function IncidentList() {
         width={520}
       >
         <Form form={reinforcementForm} layout="vertical">
-          <Form.Item label="增援单位名称" name="unitName" rules={[{ required: true, message: '请输入单位名称' }]}>
-            <Input placeholder="例如：特警支队一大队" />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={14}>
+              <Form.Item label="增援单位名称" name="unitName" rules={[{ required: true, message: '请输入单位名称' }]}>
+                <Input placeholder="例如：特警支队一大队" />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label="单位类别" name="unitCategory" rules={[{ required: true, message: '请选择单位类别' }]} initialValue="patrol">
+                <Select placeholder="选择单位类别">
+                  <Option value="patrol">巡警</Option>
+                  <Option value="swat">特警</Option>
+                  <Option value="traffic">交警</Option>
+                  <Option value="tech">技侦</Option>
+                  <Option value="fire">消防</Option>
+                  <Option value="medical">医疗</Option>
+                  <Option value="other">其他</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item label="增援车辆" name="vehicleId" rules={[{ required: true, message: '请选择车辆' }]}>
@@ -685,6 +949,82 @@ export default function IncidentList() {
           </Form.Item>
           <Form.Item label="职责任务" name="task" rules={[{ required: true, message: '请输入任务' }]}>
             <Input.TextArea rows={3} placeholder="请描述该增援单位的具体任务..." />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="下发协作指令"
+        open={commandModal}
+        onCancel={() => setCommandModal(false)}
+        onOk={handleIssueCommand}
+        okText="确认下发"
+        width={520}
+      >
+        <Form form={commandForm} layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="接收单位" name="unitId" rules={[{ required: true, message: '请选择单位' }]}>
+                <Select placeholder="选择接收单位">
+                  {(currentIncident?.jointUnits || []).map(u => (
+                    <Option key={u.id} value={u.id}>
+                      {u.unitName}（{getUnitCategoryLabel(u.unitCategory || 'other')}）
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="指令优先级" name="priority" rules={[{ required: true, message: '请选择优先级' }]} initialValue="normal">
+                <Select placeholder="选择优先级">
+                  <Option value="normal">普通</Option>
+                  <Option value="urgent">紧急</Option>
+                  <Option value="critical">特急</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="指令内容" name="content" rules={[{ required: true, message: '请输入指令内容' }]}>
+            <Input.TextArea rows={4} placeholder="请详细描述该单位需要执行的任务..." />
+          </Form.Item>
+          <Form.Item label="要求完成时间" name="deadline">
+            <DatePicker
+              showTime
+              style={{ width: '100%' }}
+              placeholder="选择要求完成时间（可选）"
+              format="YYYY-MM-DD HH:mm"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={selectedCommand ? `回传反馈 - ${selectedCommand.unitName}` : '回传反馈'}
+        open={feedbackModal}
+        onCancel={() => setFeedbackModal(false)}
+        onOk={handleAddFeedback}
+        okText="提交反馈"
+        width={520}
+      >
+        {selectedCommand && (
+          <div style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
+            <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>原指令：</div>
+            <div style={{ fontSize: 13 }}>{selectedCommand.content}</div>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
+              下发时间：{dayjs(selectedCommand.issuedAt).format('YYYY-MM-DD HH:mm:ss')}
+            </div>
+          </div>
+        )}
+        <Form form={feedbackForm} layout="vertical">
+          <Form.Item label="当前状态" name="status" rules={[{ required: true, message: '请选择状态' }]} initialValue="in_progress">
+            <Select placeholder="选择当前执行状态">
+              <Option value="received">已接收</Option>
+              <Option value="in_progress">执行中</Option>
+              <Option value="completed">已完成</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item label="反馈内容" name="content" rules={[{ required: true, message: '请输入反馈内容' }]}>
+            <Input.TextArea rows={4} placeholder="请详细描述执行情况、遇到的问题或结果..." />
           </Form.Item>
         </Form>
       </Modal>
