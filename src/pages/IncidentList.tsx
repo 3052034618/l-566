@@ -1,18 +1,19 @@
 import { useState } from 'react'
 import {
   Card, Table, Tag, Space, Button, Input, Select, DatePicker, Modal, Drawer, Descriptions,
-  Timeline, Divider, Form, message
+  Timeline, Divider, Form, message, List, Progress, Tooltip, Row, Col, Steps, Empty
 } from 'antd'
 import {
   EyeOutlined, ThunderboltOutlined, FileAddOutlined, SafetyOutlined, AlertOutlined,
-  SafetyCertificateOutlined
+  SafetyCertificateOutlined, RiseOutlined, TeamOutlined, CarOutlined, CheckCircleOutlined,
+  ClockCircleOutlined, FileTextOutlined, PlusOutlined, CloseOutlined
 } from '@ant-design/icons'
 import { usePoliceStore } from '../store/policeStore'
 import { INCIDENT_TYPE_LABELS, INCIDENT_STATUS_LABELS, PRIORITY_LABELS } from '../data/mockData'
 import dayjs from 'dayjs'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
-import type { Incident } from '../types'
+import type { Incident, AssignmentLog, JointDisposalUnit } from '../types'
 
 const { RangePicker } = DatePicker
 const { Option } = Select
@@ -22,12 +23,20 @@ export default function IncidentList() {
   const officers = usePoliceStore(s => s.officers)
   const vehicles = usePoliceStore(s => s.vehicles)
   const assignTask = usePoliceStore(s => s.assignTask)
+  const upgradeToJointOperation = usePoliceStore(s => s.upgradeToJointOperation)
+  const addReinforcementUnit = usePoliceStore(s => s.addReinforcementUnit)
+  const updateDisposalNode = usePoliceStore(s => s.updateDisposalNode)
+  const updateOnSiteDivision = usePoliceStore(s => s.updateOnSiteDivision)
+  const verifyTransfer = usePoliceStore(s => s.verifyTransfer)
   const [typeFilter, setTypeFilter] = useState<string | undefined>()
   const [statusFilter, setStatusFilter] = useState<string | undefined>()
   const [keyword, setKeyword] = useState('')
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentIncident, setCurrentIncident] = useState<Incident | null>(null)
   const [noteForm] = Form.useForm()
+  const [divisionForm] = Form.useForm()
+  const [reinforcementModal, setReinforcementModal] = useState(false)
+  const [reinforcementForm] = Form.useForm()
   const addNoteToIncident = usePoliceStore(s => s.addNoteToIncident)
   const navigate = useNavigate()
 
@@ -84,6 +93,98 @@ export default function IncidentList() {
         setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
       }
     })
+  }
+
+  const handleUpgradeToJoint = () => {
+    if (!currentIncident) return
+    Modal.confirm({
+      title: '升级为联合处置',
+      content: '确认将该警情升级为重大警情联合处置模式？升级后可调度多组警力协同处置。',
+      okText: '确认升级',
+      okType: 'danger',
+      onOk: () => {
+        upgradeToJointOperation(currentIncident.id)
+        message.success('已升级为联合处置模式')
+        setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+      }
+    })
+  }
+
+  const handleAddReinforcement = () => {
+    reinforcementForm.validateFields().then(values => {
+      if (!currentIncident) return
+      const selectedOfficers = officers.filter(o => values.officerIds?.includes(o.id))
+      const vehicle = vehicles.find(v => v.id === values.vehicleId)
+      addReinforcementUnit(currentIncident.id, {
+        unitName: values.unitName,
+        role: 'reinforcement',
+        vehicleId: values.vehicleId,
+        vehiclePlate: vehicle?.plateNumber || '',
+        officerIds: values.officerIds,
+        officerNames: selectedOfficers.map(o => o.name),
+        status: 'en_route',
+        eta: values.eta || 10,
+        task: values.task
+      })
+      message.success('增援警力已派出')
+      setReinforcementModal(false)
+      reinforcementForm.resetFields()
+      setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+    })
+  }
+
+  const handleVerifyTransfer = (passed: boolean) => {
+    if (!currentIncident) return
+    Modal.confirm({
+      title: passed ? '确认转派验收通过' : '确认转派验收不通过',
+      content: passed
+        ? '确认新警力已到位，验收通过？'
+        : '确认验收不通过？需重新调度警力。',
+      onOk: () => {
+        verifyTransfer(currentIncident.id, passed, passed ? '验收通过，新警力已到位' : '验收不通过，需重新调度')
+        message.success(passed ? '转派验收通过' : '验收不通过')
+        setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+      }
+    })
+  }
+
+  const handleUpdateNode = (nodeId: string, status: 'in_progress' | 'completed') => {
+    if (!currentIncident) return
+    updateDisposalNode(currentIncident.id, nodeId, status)
+    setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+  }
+
+  const handleUpdateDivision = () => {
+    divisionForm.validateFields().then(values => {
+      if (!currentIncident) return
+      updateOnSiteDivision(currentIncident.id, values.division)
+      message.success('现场分工已更新')
+      setCurrentIncident(usePoliceStore.getState().incidents.find(i => i.id === currentIncident.id) || null)
+    })
+  }
+
+  const getLogTypeLabel = (type: AssignmentLog['type']) => {
+    const map: Record<string, string> = {
+      dispatch: '派警',
+      transfer_request: '转派申请',
+      transfer_approved: '转派批准',
+      transfer_rejected: '转派驳回',
+      acceptance: '转派验收',
+      reinforcement: '增援派出'
+    }
+    return map[type] || type
+  }
+
+  const getLogTypeColor = (type: AssignmentLog['type']) => {
+    const map: Record<string, string> = {
+      dispatch: 'blue',
+      transfer_request: 'orange',
+      transfer_approved: 'green',
+      transfer_rejected: 'red',
+      acceptance: 'purple',
+      reinforcement: 'cyan'
+    }
+    return map[type] || 'default'
   }
 
   const columns: ColumnsType<Incident> = [
@@ -195,10 +296,29 @@ export default function IncidentList() {
       </Card>
 
       <Drawer
-        title="警情详情"
-        width={640}
+        title={
+          <Space>
+            <span>警情详情</span>
+            {currentIncident?.isJointOperation && (
+              <Tag color="red" icon={<TeamOutlined />}>联合处置</Tag>
+            )}
+          </Space>
+        }
+        width={720}
         open={detailVisible}
         onClose={() => setDetailVisible(false)}
+        extra={
+          currentIncident && (
+            <Space>
+              {!currentIncident.isJointOperation && currentIncident.status !== 'closed' && currentIncident.status !== 'pending' && (
+                <Button icon={<RiseOutlined />} onClick={handleUpgradeToJoint}>
+                  升级联合处置
+                </Button>
+              )}
+              <Button onClick={() => setDetailVisible(false)}>关闭</Button>
+            </Space>
+          )
+        }
       >
         {currentIncident && (
           <div>
@@ -260,6 +380,248 @@ export default function IncidentList() {
               ].filter(Boolean) as any}
             />
 
+            {currentIncident.isJointOperation && (
+              <>
+                <Divider orientation="left">
+                  <Space>
+                    <TeamOutlined style={{ color: '#cf1322' }} />
+                    <span>联合处置力量</span>
+                    <Tag color="red">{currentIncident.jointUnits?.length || 0} 组</Tag>
+                  </Space>
+                </Divider>
+                <List
+                  size="small"
+                  dataSource={currentIncident.jointUnits || []}
+                  renderItem={(unit: JointDisposalUnit) => (
+                    <List.Item
+                      actions={[
+                        <Tag key="role" color={unit.role === 'primary' ? 'red' : 'blue'}>
+                          {unit.role === 'primary' ? '主责' : '增援'}
+                        </Tag>
+                      ]}
+                    >
+                      <List.Item.Meta
+                        avatar={
+                          <div style={{
+                            width: 36, height: 36, borderRadius: '50%',
+                            background: unit.role === 'primary' ? '#fff1f0' : '#e6f7ff',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: unit.role === 'primary' ? '#cf1322' : '#1890ff',
+                            fontSize: 18
+                          }}>
+                            {unit.role === 'primary' ? '🚨' : '🚔'}
+                          </div>
+                        }
+                        title={
+                          <Space>
+                            <span style={{ fontWeight: 500 }}>{unit.unitName}</span>
+                            <Tag color={
+                              unit.status === 'arrived' ? 'green' :
+                              unit.status === 'handling' ? 'blue' :
+                              unit.status === 'completed' ? 'default' : 'orange'
+                            }>
+                              {unit.status === 'en_route' ? '赶赴中' :
+                               unit.status === 'arrived' ? '已到场' :
+                               unit.status === 'handling' ? '处置中' : '已完成'}
+                            </Tag>
+                          </Space>
+                        }
+                        description={
+                          <div style={{ fontSize: 12, color: '#666', lineHeight: 1.8 }}>
+                            <div>
+                              <CarOutlined style={{ marginRight: 4 }} />
+                              {unit.vehiclePlate}
+                              <span style={{ margin: '0 8px' }}>|</span>
+                              <TeamOutlined style={{ marginRight: 4 }} />
+                              {unit.officerNames.join('、')}
+                            </div>
+                            <div style={{ color: '#888' }}>
+                              任务：{unit.task}
+                              {unit.eta !== undefined && unit.status === 'en_route' && (
+                                <span style={{ marginLeft: 8 }}>预计 {unit.eta} 分钟到达</span>
+                              )}
+                              {unit.arrivedAt && (
+                                <span style={{ marginLeft: 8 }}>到场时间：{dayjs(unit.arrivedAt).format('HH:mm')}</span>
+                              )}
+                            </div>
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+
+                {currentIncident.status !== 'closed' && (
+                  <Button
+                    type="dashed"
+                    block
+                    style={{ marginTop: 8 }}
+                    icon={<PlusOutlined />}
+                    onClick={() => setReinforcementModal(true)}
+                  >
+                    派增援
+                  </Button>
+                )}
+
+                <Divider orientation="left">
+                  <Space>
+                    <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                    <span>处置节点</span>
+                  </Space>
+                </Divider>
+                <Steps
+                  direction="vertical"
+                  size="small"
+                  items={(currentIncident.disposalNodes || []).map((node, idx) => ({
+                    status: node.status === 'completed' ? 'finish' : node.status === 'in_progress' ? 'process' : 'wait',
+                    title: (
+                      <Space>
+                        <span>{node.name}</span>
+                        {node.status === 'in_progress' && currentIncident.status !== 'closed' && (
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => handleUpdateNode(node.id, 'completed')}
+                          >
+                            完成
+                          </Button>
+                        )}
+                        {node.status === 'pending' && currentIncident.status !== 'closed' && idx === (currentIncident.disposalNodes || []).findIndex(n => n.status === 'pending') && (
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => handleUpdateNode(node.id, 'in_progress')}
+                          >
+                            开始
+                          </Button>
+                        )}
+                      </Space>
+                    ),
+                    description: node.completedAt
+                      ? `${node.completedBy || ''} · ${dayjs(node.completedAt).format('HH:mm')}`
+                      : node.notes || '',
+                  }))}
+                />
+
+                <Divider orientation="left">
+                  <Space>
+                    <FileTextOutlined />
+                    <span>现场分工</span>
+                  </Space>
+                </Divider>
+                {currentIncident.onSiteDivision ? (
+                  <div style={{
+                    padding: 12, background: '#f9f9f9', borderRadius: 4,
+                    fontSize: 13, whiteSpace: 'pre-wrap'
+                  }}>
+                    {currentIncident.onSiteDivision}
+                  </div>
+                ) : (
+                  <Empty description="暂无现场分工" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                )}
+                {currentIncident.status !== 'closed' && (
+                  <Button
+                    type="link"
+                    size="small"
+                    style={{ padding: 0 }}
+                    onClick={() => {
+                      divisionForm.setFieldsValue({ division: currentIncident.onSiteDivision || '' })
+                      Modal.confirm({
+                        title: '编辑现场分工',
+                        content: (
+                          <Form form={divisionForm} layout="vertical" style={{ marginTop: 16 }}>
+                            <Form.Item name="division" rules={[{ required: true, message: '请输入现场分工' }]}>
+                              <Input.TextArea rows={4} placeholder="请输入各单位现场分工..." />
+                            </Form.Item>
+                          </Form>
+                        ),
+                        onOk: handleUpdateDivision
+                      })
+                    }}
+                  >
+                    {currentIncident.onSiteDivision ? '编辑分工' : '+ 添加现场分工'}
+                  </Button>
+                )}
+              </>
+            )}
+
+            <Divider orientation="left">
+              <Space>
+                <ClockCircleOutlined />
+                <span>派警流转记录</span>
+              </Space>
+            </Divider>
+            {(currentIncident.assignmentLogs && currentIncident.assignmentLogs.length > 0) ? (
+              <Timeline
+                items={[...currentIncident.assignmentLogs].reverse().map(log => ({
+                  color: getLogTypeColor(log.type),
+                  dot: log.type.includes('approved') || log.type === 'acceptance'
+                    ? <CheckCircleOutlined />
+                    : log.type.includes('rejected')
+                    ? <CloseOutlined />
+                    : <ClockCircleOutlined />,
+                  children: (
+                    <div>
+                      <Space style={{ marginBottom: 4 }}>
+                        <Tag color={getLogTypeColor(log.type)}>{getLogTypeLabel(log.type)}</Tag>
+                        <span style={{ fontSize: 12, color: '#999' }}>
+                          {dayjs(log.operatedAt).format('YYYY-MM-DD HH:mm:ss')}
+                        </span>
+                      </Space>
+                      <div style={{ fontSize: 12, color: '#666' }}>
+                        操作人：{log.operator}
+                      </div>
+                      {log.beforeVehicle && log.beforeOfficers && (
+                        <div style={{ fontSize: 12, color: '#fa8c16', marginTop: 4 }}>
+                          换前：{log.beforeVehicle.plate} · {log.beforeOfficers.map(o => o.name).join('、')}
+                        </div>
+                      )}
+                      {log.afterVehicle && log.afterOfficers && (
+                        <div style={{ fontSize: 12, color: '#52c41a', marginTop: 2 }}>
+                          换后：{log.afterVehicle.plate} · {log.afterOfficers.map(o => o.name).join('、')}
+                        </div>
+                      )}
+                      {log.reason && (
+                        <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                          原因：{log.reason}
+                        </div>
+                      )}
+                      {log.approvalComments && (
+                        <div style={{ fontSize: 12, color: '#1890ff', marginTop: 2 }}>
+                          审批意见：{log.approvalComments}
+                          {log.approvedBy && `（${log.approvedBy}）`}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }))}
+              />
+            ) : (
+              <Empty description="暂无流转记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
+
+            {currentIncident.assignmentLogs?.some(l => l.type === 'transfer_approved') &&
+             !currentIncident.assignmentLogs?.some(l => l.type === 'acceptance') &&
+             currentIncident.status !== 'closed' && (
+              <Card size="small" style={{ marginTop: 16, borderColor: '#faad14', background: '#fffbe6' }}>
+                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <Space>
+                    <AlertOutlined style={{ color: '#faad14' }} />
+                    <span style={{ fontWeight: 500 }}>转派待验收</span>
+                    <span style={{ fontSize: 12, color: '#666' }}>请确认新警力是否到位</span>
+                  </Space>
+                  <Space>
+                    <Button size="small" danger onClick={() => handleVerifyTransfer(false)}>
+                      验收不通过
+                    </Button>
+                    <Button size="small" type="primary" onClick={() => handleVerifyTransfer(true)}>
+                      验收通过
+                    </Button>
+                  </Space>
+                </Space>
+              </Card>
+            )}
+
             {currentIncident.notes.length > 0 && (
               <>
                 <Divider orientation="left">处置记录</Divider>
@@ -281,6 +643,51 @@ export default function IncidentList() {
           </div>
         )}
       </Drawer>
+
+      <Modal
+        title="派遣增援警力"
+        open={reinforcementModal}
+        onCancel={() => setReinforcementModal(false)}
+        onOk={handleAddReinforcement}
+        okText="确认派遣"
+        width={520}
+      >
+        <Form form={reinforcementForm} layout="vertical">
+          <Form.Item label="增援单位名称" name="unitName" rules={[{ required: true, message: '请输入单位名称' }]}>
+            <Input placeholder="例如：特警支队一大队" />
+          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="增援车辆" name="vehicleId" rules={[{ required: true, message: '请选择车辆' }]}>
+                <Select placeholder="选择车辆">
+                  {vehicles.filter(v => v.status === 'available').map(v => (
+                    <Option key={v.id} value={v.id}>
+                      {v.plateNumber}（{v.type === 'patrol_car' ? '巡逻车' : v.type === 'swat_vehicle' ? '特警车' : v.type}）
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="预计到达(分钟)" name="eta" rules={[{ required: true, message: '请输入预计时间' }]}>
+                <Input type="number" placeholder="例如：10" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="增援警员" name="officerIds" rules={[{ required: true, message: '请选择警员' }]}>
+            <Select mode="multiple" placeholder="选择 2-3 名警员">
+              {officers.filter(o => o.status === 'on_duty' && o.currentLoad < 2).map(o => (
+                <Option key={o.id} value={o.id}>
+                  {o.name} - {o.rank}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item label="职责任务" name="task" rules={[{ required: true, message: '请输入任务' }]}>
+            <Input.TextArea rows={3} placeholder="请描述该增援单位的具体任务..." />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }

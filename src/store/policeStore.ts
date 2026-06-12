@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import {
   Incident, PoliceVehicle, PoliceOfficer, Camera, Case, Schedule, Area, Alert, TaskAssignment,
-  IncidentType, PriorityLevel, IncidentStatus, CaseStatus, CameraAlertLog
+  IncidentType, PriorityLevel, IncidentStatus, CaseStatus, CameraAlertLog,
+  JointDisposalUnit, DisposalNode, AssignmentLog, AssignmentLogType
 } from '../types'
 import {
   mockAreas, mockOfficers, mockVehicles, mockCameras, mockIncidents, mockCases, mockAlerts,
@@ -33,12 +34,20 @@ interface PoliceStore {
   addIncident: (data: Omit<Incident, 'id' | 'reportedAt' | 'status' | 'assignedOfficerIds' | 'notes' | 'cameraIds' | 'type' | 'priority'>) => Incident
   classifyIncident: (description: string, location: string) => { type: IncidentType; priority: PriorityLevel }
   updateIncidentStatus: (id: string, status: IncidentStatus) => void
-  assignTask: (incidentId: string) => TaskAssignment | null
+  assignTask: (incidentId: string, excludeVehicleId?: string, excludeOfficerIds?: string[]) => TaskAssignment | null
   confirmAssignment: (assignmentId: string) => void
   requestTransfer: (assignmentId: string, reason: string) => void
   approveTransfer: (assignmentId: string, approve: boolean) => void
   addNoteToIncident: (incidentId: string, note: string) => void
   closeIncident: (incidentId: string) => void
+
+  upgradeToJointOperation: (incidentId: string) => void
+  addReinforcementUnit: (incidentId: string, unit: Omit<JointDisposalUnit, 'id'>) => void
+  updateDisposalNode: (incidentId: string, nodeId: string, status: DisposalNode['status'], notes?: string) => void
+  updateOnSiteDivision: (incidentId: string, division: string) => void
+  addAssignmentLog: (incidentId: string, log: Omit<AssignmentLog, 'id' | 'operatedAt'>) => void
+  verifyTransfer: (incidentId: string, passed: boolean, comments?: string) => void
+  addDisposalNode: (incidentId: string, nodeName: string) => void
 
   addCase: (data: Omit<Case, 'id' | 'transcripts' | 'evidences' | 'isOverdue'>) => Case
   updateCaseStatus: (id: string, status: CaseStatus) => void
@@ -191,12 +200,15 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
     get().persist()
   },
 
-  assignTask: (incidentId) => {
+  assignTask: (incidentId, excludeVehicleId, excludeOfficerIds) => {
     const state = get()
     const incident = state.incidents.find(i => i.id === incidentId)
     if (!incident) return null
 
-    const availableVehicles = state.vehicles.filter(v => v.status === 'available')
+    let availableVehicles = state.vehicles.filter(v => v.status === 'available')
+    if (excludeVehicleId) {
+      availableVehicles = availableVehicles.filter(v => v.id !== excludeVehicleId)
+    }
     if (availableVehicles.length === 0) return null
 
     const skillMap: Record<IncidentType, string[]> = {
@@ -220,9 +232,12 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
 
     const bestVehicle = scoredVehicles[0].vehicle
     const vehicleOfficers = state.officers.filter(o => o.assignedVehicleId === bestVehicle.id && o.status === 'on_duty')
-    const otherOfficers = state.officers.filter(o =>
+    let otherOfficers = state.officers.filter(o =>
       o.status === 'on_duty' && !o.assignedVehicleId && o.currentLoad < 2
     )
+    if (excludeOfficerIds && excludeOfficerIds.length > 0) {
+      otherOfficers = otherOfficers.filter(o => !excludeOfficerIds.includes(o.id))
+    }
 
     const allCandidates = [...vehicleOfficers, ...otherOfficers].map(o => {
       const skillMatch = requiredSkills.filter(s => o.skills.includes(s)).length
@@ -231,6 +246,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
     }).sort((a, b) => a.score - b.score)
 
     const selectedOfficers = allCandidates.slice(0, Math.min(2, allCandidates.length)).map(x => x.officer)
+    if (selectedOfficers.length === 0) return null
     const eta = Math.round(scoredVehicles[0].score * 3 + 5)
 
     const assignment: TaskAssignment = {
@@ -257,6 +273,19 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         ...o, currentLoad: o.currentLoad + 1, currentIncidentIds: [...o.currentIncidentIds, incidentId]
       } : o)
     }))
+
+    const log: Omit<AssignmentLog, 'id' | 'operatedAt'> = {
+      incidentId,
+      type: 'dispatch',
+      operator: '系统自动派警',
+      afterVehicle: { id: bestVehicle.id, plate: bestVehicle.plateNumber },
+      afterOfficers: selectedOfficers.map(o => ({ id: o.id, name: o.name })),
+      reason: `智能调度：距离 ${(calcDistance(incident.coordinates, bestVehicle.currentCoordinates) * 1000).toFixed(0)}m`
+    }
+    setTimeout(() => {
+      get().addAssignmentLog(incidentId, log)
+    }, 50)
+
     get().persist()
     return assignment
   },
@@ -273,11 +302,29 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
   },
 
   requestTransfer: (assignmentId, reason) => {
+    const state = get()
+    const assignment = state.assignments.find(a => a.id === assignmentId)
+    if (!assignment) return
+
+    const vehicle = state.vehicles.find(v => v.id === assignment.vehicleId)
+    const officers = state.officers.filter(o => assignment.officerIds.includes(o.id))
+
     set(state => ({
       assignments: state.assignments.map(a => a.id === assignmentId ? {
         ...a, transferRequested: true, transferStatus: 'pending', transferReason: reason
       } : a)
     }))
+
+    const log: Omit<AssignmentLog, 'id' | 'operatedAt'> = {
+      incidentId: assignment.incidentId,
+      type: 'transfer_request',
+      operator: officers[0]?.name || '执勤警员',
+      beforeVehicle: vehicle ? { id: vehicle.id, plate: vehicle.plateNumber } : undefined,
+      beforeOfficers: officers.map(o => ({ id: o.id, name: o.name })),
+      reason
+    }
+    get().addAssignmentLog(assignment.incidentId, log)
+
     get().persist()
   },
 
@@ -286,10 +333,24 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
     const assignment = state.assignments.find(a => a.id === assignmentId)
     if (!assignment) return
 
+    const oldVehicle = state.vehicles.find(v => v.id === assignment.vehicleId)
+    const oldOfficers = state.officers.filter(o => assignment.officerIds.includes(o.id))
+    const incidentId = assignment.incidentId
+
     if (approve) {
       const oldVehicleId = assignment.vehicleId
       const oldOfficerIds = [...assignment.officerIds]
-      const incidentId = assignment.incidentId
+
+      const log: Omit<AssignmentLog, 'id' | 'operatedAt'> = {
+        incidentId,
+        type: 'transfer_approved',
+        operator: '指挥长',
+        beforeVehicle: oldVehicle ? { id: oldVehicle.id, plate: oldVehicle.plateNumber } : undefined,
+        beforeOfficers: oldOfficers.map(o => ({ id: o.id, name: o.name })),
+        approvedBy: '指挥长',
+        approvalComments: '同意转派，已调度新警力前往增援'
+      }
+      get().addAssignmentLog(incidentId, log)
 
       set(state => ({
         assignments: state.assignments.filter(a => a.id !== assignmentId),
@@ -308,7 +369,7 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
       get().persist()
 
       setTimeout(() => {
-        get().assignTask(incidentId)
+        get().assignTask(incidentId, oldVehicleId, oldOfficerIds)
       }, 300)
     } else {
       set(state => ({
@@ -316,6 +377,18 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
           ...a, transferRequested: false, transferStatus: 'rejected' as const
         } : a)
       }))
+
+      const log: Omit<AssignmentLog, 'id' | 'operatedAt'> = {
+        incidentId,
+        type: 'transfer_rejected',
+        operator: '指挥长',
+        beforeVehicle: oldVehicle ? { id: oldVehicle.id, plate: oldVehicle.plateNumber } : undefined,
+        beforeOfficers: oldOfficers.map(o => ({ id: o.id, name: o.name })),
+        approvedBy: '指挥长',
+        approvalComments: '驳回转派申请，请继续执行任务'
+      }
+      get().addAssignmentLog(incidentId, log)
+
       get().persist()
     }
   },
@@ -347,6 +420,172 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
         currentIncidentIds: o.currentIncidentIds.filter(id => id !== incidentId)
       } : o)
     }))
+    get().persist()
+  },
+
+  upgradeToJointOperation: (incidentId) => {
+    const state = get()
+    const incident = state.incidents.find(i => i.id === incidentId)
+    if (!incident) return
+
+    const primaryVehicle = state.vehicles.find(v => v.id === incident.assignedVehicleId)
+    const primaryOfficers = state.officers.filter(o => incident.assignedOfficerIds.includes(o.id))
+
+    const primaryUnit: JointDisposalUnit = {
+      id: uuidv4(),
+      unitName: '主责处置组',
+      role: 'primary',
+      vehicleId: incident.assignedVehicleId || '',
+      vehiclePlate: primaryVehicle?.plateNumber || '',
+      officerIds: [...incident.assignedOfficerIds],
+      officerNames: primaryOfficers.map(o => o.name),
+      status: incident.status === 'en_route' || incident.status === 'handling' ? 'handling' : 'en_route',
+      eta: 0,
+      arrivedAt: incident.arrivedAt,
+      task: '现场指挥与主要处置'
+    }
+
+    const defaultNodes: DisposalNode[] = [
+      { id: uuidv4(), name: '接警响应', status: 'completed', completedAt: incident.reportedAt, completedBy: '指挥中心' },
+      { id: uuidv4(), name: '警力部署', status: 'in_progress', completedBy: '指挥长' },
+      { id: uuidv4(), name: '现场控制', status: 'pending' },
+      { id: uuidv4(), name: '调查取证', status: 'pending' },
+      { id: uuidv4(), name: '人员移交', status: 'pending' },
+      { id: uuidv4(), name: '现场清理', status: 'pending' }
+    ]
+
+    set(state => ({
+      incidents: state.incidents.map(i => i.id === incidentId ? {
+        ...i,
+        isJointOperation: true,
+        jointUnits: [primaryUnit],
+        disposalNodes: defaultNodes,
+        assignmentLogs: i.assignmentLogs || [],
+        onSiteDivision: i.onSiteDivision || ''
+      } : i)
+    }))
+    get().persist()
+  },
+
+  addReinforcementUnit: (incidentId, unit) => {
+    const state = get()
+    const incident = state.incidents.find(i => i.id === incidentId)
+    if (!incident || !incident.isJointOperation) return
+
+    const reinforcementVehicle = state.vehicles.find(v => v.id === unit.vehicleId)
+    if (reinforcementVehicle) {
+      set(state => ({
+        vehicles: state.vehicles.map(v => v.id === unit.vehicleId ? {
+          ...v, status: 'on_duty', currentIncidentId: incidentId,
+          currentLoad: v.currentLoad + unit.officerIds.length
+        } : v),
+        officers: state.officers.map(o => unit.officerIds.includes(o.id) ? {
+          ...o, currentLoad: o.currentLoad + 1, currentIncidentIds: [...o.currentIncidentIds, incidentId]
+        } : o)
+      }))
+    }
+
+    const newUnit: JointDisposalUnit = {
+      ...unit,
+      id: uuidv4(),
+      role: 'reinforcement'
+    }
+
+    set(state => ({
+      incidents: state.incidents.map(i => i.id === incidentId ? {
+        ...i,
+        jointUnits: [...(i.jointUnits || []), newUnit]
+      } : i)
+    }))
+    get().persist()
+  },
+
+  updateDisposalNode: (incidentId, nodeId, status, notes) => {
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        return {
+          ...i,
+          disposalNodes: (i.disposalNodes || []).map(n => {
+            if (n.id !== nodeId) return n
+            const updated: DisposalNode = { ...n, status }
+            if (status === 'completed') {
+              updated.completedAt = dayjs().format()
+              updated.completedBy = '指挥长'
+            }
+            if (notes) updated.notes = notes
+            return updated
+          })
+        }
+      })
+    }))
+    get().persist()
+  },
+
+  addDisposalNode: (incidentId, nodeName) => {
+    set(state => ({
+      incidents: state.incidents.map(i => {
+        if (i.id !== incidentId) return i
+        const newNode: DisposalNode = {
+          id: uuidv4(),
+          name: nodeName,
+          status: 'pending'
+        }
+        return {
+          ...i,
+          disposalNodes: [...(i.disposalNodes || []), newNode]
+        }
+      })
+    }))
+    get().persist()
+  },
+
+  updateOnSiteDivision: (incidentId, division) => {
+    set(state => ({
+      incidents: state.incidents.map(i => i.id === incidentId ? {
+        ...i, onSiteDivision: division
+      } : i)
+    }))
+    get().persist()
+  },
+
+  addAssignmentLog: (incidentId, log) => {
+    const newLog: AssignmentLog = {
+      ...log,
+      id: uuidv4(),
+      operatedAt: dayjs().format()
+    }
+    set(state => ({
+      incidents: state.incidents.map(i => i.id === incidentId ? {
+        ...i,
+        assignmentLogs: [...(i.assignmentLogs || []), newLog]
+      } : i)
+    }))
+    get().persist()
+  },
+
+  verifyTransfer: (incidentId, passed, comments) => {
+    const state = get()
+    const incident = state.incidents.find(i => i.id === incidentId)
+    if (!incident) return
+
+    if (passed) {
+      const log: Omit<AssignmentLog, 'id' | 'operatedAt'> = {
+        incidentId,
+        type: 'acceptance',
+        operator: '指挥长',
+        afterVehicle: incident.assignedVehicleId ? {
+          id: incident.assignedVehicleId,
+          plate: state.vehicles.find(v => v.id === incident.assignedVehicleId)?.plateNumber || ''
+        } : undefined,
+        afterOfficers: incident.assignedOfficerIds.map(id => ({
+          id,
+          name: state.officers.find(o => o.id === id)?.name || ''
+        })),
+        approvalComments: comments || '验收通过，新警力已到位'
+      }
+      get().addAssignmentLog(incidentId, log)
+    }
     get().persist()
   },
 
@@ -484,17 +723,20 @@ export const usePoliceStore = create<PoliceStore>((set, get) => ({
   },
 
   acknowledgeCameraAlert: (cameraId, notes) => {
+    const camera = get().cameras.find(c => c.id === cameraId)
     const log: CameraAlertLog = {
       id: uuidv4(),
       cameraId,
-      alertType: get().cameras.find(c => c.id === cameraId)?.alertType || 'unknown',
+      alertType: camera?.alertType || 'unknown',
+      alertStartedAt: camera?.alertStartedAt || dayjs().format(),
       acknowledgedAt: dayjs().format(),
       acknowledgedBy: '指挥长·系统管理员',
-      notes
+      notes,
+      processingNotes: notes || '已确认报警，通知附近巡逻警员前往处置'
     }
     set(state => ({
       cameras: state.cameras.map(c => c.id === cameraId ? {
-        ...c, hasAlert: false, alertType: undefined
+        ...c, hasAlert: false, alertType: undefined, alertStartedAt: undefined
       } : c),
       alerts: state.alerts.filter(a => !(a.type === 'abnormal_behavior' && a.relatedId === cameraId)),
       cameraAlertLogs: [...state.cameraAlertLogs, log]

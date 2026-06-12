@@ -39,12 +39,12 @@ export const mockVehicles: PoliceVehicle[] = [
 
 export const mockCameras: Camera[] = [
   { id: 'c1', name: '王府井大街1号', location: '王府井大街与东长安街交口', coordinates: [39.9087, 116.4074], status: 'online', hasAlert: false },
-  { id: 'c2', name: '王府井大街2号', location: '王府井大街北段', coordinates: [39.9137, 116.4084], status: 'online', hasAlert: true, alertType: '异常聚集' },
+  { id: 'c2', name: '王府井大街2号', location: '王府井大街北段', coordinates: [39.9137, 116.4084], status: 'online', hasAlert: true, alertType: '异常聚集', alertStartedAt: dayjs().subtract(8, 'minute').format() },
   { id: 'c3', name: '天安门东', location: '天安门广场东侧', coordinates: [39.9055, 116.3976], status: 'online', hasAlert: false },
   { id: 'c4', name: '西单路口', location: '西单北大街路口', coordinates: [39.9090, 116.3730], status: 'online', hasAlert: false },
   { id: 'c5', name: 'CBD国贸', location: '国贸桥西北角', coordinates: [39.9085, 116.4605], status: 'offline', hasAlert: false },
   { id: 'c6', name: '东三环北路', location: '三元桥南侧', coordinates: [39.9450, 116.4550], status: 'online', hasAlert: false },
-  { id: 'c7', name: '北京站广场', location: '北京站出站口', coordinates: [39.9030, 116.4270], status: 'online', hasAlert: true, alertType: '可疑人员徘徊' },
+  { id: 'c7', name: '北京站广场', location: '北京站出站口', coordinates: [39.9030, 116.4270], status: 'online', hasAlert: true, alertType: '可疑人员徘徊', alertStartedAt: dayjs().subtract(3, 'minute').format() },
   { id: 'c8', name: '中关村大街', location: '中关村海龙大厦前', coordinates: [39.9840, 116.3160], status: 'online', hasAlert: false }
 ]
 

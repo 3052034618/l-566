@@ -4,6 +4,8 @@ export type PriorityLevel = 1 | 2 | 3 | 4 | 5
 export type CaseStatus = 'accepted' | 'investigating' | 'solved' | 'transferred'
 export type TransferStatus = 'pending' | 'approved' | 'rejected'
 export type ScheduleChangeStatus = 'pending' | 'approved' | 'rejected'
+export type UnitRole = 'primary' | 'reinforcement'
+export type AssignmentLogType = 'dispatch' | 'transfer_request' | 'transfer_approved' | 'transfer_rejected' | 'acceptance' | 'reinforcement'
 
 export interface Incident {
   id: string
@@ -25,6 +27,11 @@ export interface Incident {
   isOverdue?: boolean
   escalated?: boolean
   cameraIds: string[]
+  isJointOperation?: boolean
+  jointUnits?: JointDisposalUnit[]
+  disposalNodes?: DisposalNode[]
+  assignmentLogs?: AssignmentLog[]
+  onSiteDivision?: string
 }
 
 export interface PoliceVehicle {
@@ -73,6 +80,8 @@ export interface Camera {
   status: 'online' | 'offline'
   hasAlert: boolean
   alertType?: string
+  alertStartedAt?: string
+  alertSoundEnabled?: boolean
 }
 
 export interface Schedule {
@@ -145,9 +154,11 @@ export interface CameraAlertLog {
   id: string
   cameraId: string
   alertType: string
+  alertStartedAt: string
   acknowledgedAt: string
   acknowledgedBy: string
   notes?: string
+  processingNotes?: string
 }
 
 export interface Alert {
@@ -169,4 +180,42 @@ export interface Statistics {
   solvedCases: number
   totalCases: number
   solveRate: number
+}
+
+export interface JointDisposalUnit {
+  id: string
+  unitName: string
+  role: UnitRole
+  vehicleId: string
+  vehiclePlate: string
+  officerIds: string[]
+  officerNames: string[]
+  status: 'en_route' | 'arrived' | 'handling' | 'completed'
+  eta?: number
+  arrivedAt?: string
+  task: string
+}
+
+export interface DisposalNode {
+  id: string
+  name: string
+  status: 'pending' | 'in_progress' | 'completed'
+  completedAt?: string
+  completedBy?: string
+  notes?: string
+}
+
+export interface AssignmentLog {
+  id: string
+  incidentId: string
+  type: AssignmentLogType
+  operator: string
+  operatedAt: string
+  beforeVehicle?: { id: string; plate: string }
+  afterVehicle?: { id: string; plate: string }
+  beforeOfficers?: Array<{ id: string; name: string }>
+  afterOfficers?: Array<{ id: string; name: string }>
+  reason?: string
+  approvalComments?: string
+  approvedBy?: string
 }

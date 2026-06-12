@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import {
   Card, Row, Col, Tag, Space, Button, List, Modal, message, Badge, Empty, Tooltip, Statistic,
-  Descriptions, Divider
+  Descriptions, Divider, Select
 } from 'antd'
+const { Option } = Select
 import {
   VideoCameraOutlined, WarningOutlined, EyeOutlined, BellOutlined,
   PlayCircleOutlined, SoundOutlined, CheckCircleOutlined
@@ -23,6 +24,15 @@ export default function VideoMonitor() {
 
   const alertCameras = cameras.filter(c => c.hasAlert)
   const onlineCameras = cameras.filter(c => c.status === 'online')
+  const [alertInterval, setAlertInterval] = useState(3)
+
+  const formatDuration = (startAt?: string) => {
+    if (!startAt) return '--'
+    const diff = dayjs().diff(dayjs(startAt), 'second')
+    const mins = Math.floor(diff / 60)
+    const secs = diff % 60
+    return `${mins}分${secs}秒`
+  }
 
   useEffect(() => {
     if (alertCameras.length > 0 && alertSoundEnabled && !alertPlaying) {
@@ -32,13 +42,13 @@ export default function VideoMonitor() {
         if (usePoliceStore.getState().cameras.filter(c => c.hasAlert).length > 0) {
           playAlertSound()
         }
-      }, 3000)
+      }, alertInterval * 1000)
       return () => clearInterval(interval)
     }
     if (alertCameras.length === 0) {
       setAlertPlaying(false)
     }
-  }, [alertCameras.length, alertSoundEnabled, alertPlaying])
+  }, [alertCameras.length, alertSoundEnabled, alertPlaying, alertInterval])
 
   const viewDetail = (cameraId: string) => {
     setSelectedCamera(cameraId)
@@ -128,6 +138,20 @@ export default function VideoMonitor() {
                 <span>🚨 异常行为报警（声光联动）</span>
               </Badge>
               <Tag color="red" icon={<SoundOutlined />}>声光报警已触发</Tag>
+              <Space size={4} style={{ marginLeft: 'auto' }}>
+                <span style={{ fontSize: 12, color: '#666' }}>告警间隔:</span>
+                <Select
+                  size="small"
+                  style={{ width: 80 }}
+                  value={alertInterval}
+                  onChange={(v) => setAlertInterval(v)}
+                >
+                  <Option value={2}>2秒</Option>
+                  <Option value={3}>3秒</Option>
+                  <Option value={5}>5秒</Option>
+                  <Option value={10}>10秒</Option>
+                </Select>
+              </Space>
             </Space>
           }
           style={{ marginBottom: 16, borderColor: '#ff4d4f', background: '#fff1f0' }}
@@ -173,6 +197,9 @@ export default function VideoMonitor() {
                     description={
                       <div style={{ fontSize: 12 }}>
                         <div>📍 {camera.location}</div>
+                        <div style={{ color: '#ff4d4f', marginTop: 4 }}>
+                          ⏱ 已持续 {formatDuration(camera.alertStartedAt)}
+                        </div>
                         <Tag color="red" style={{ marginTop: 4 }}>{camera.alertType}</Tag>
                       </div>
                     }
@@ -309,10 +336,24 @@ export default function VideoMonitor() {
                       </Tag>
                     </div>
                     {currentCamera.hasAlert && (
-                      <div>
-                        <strong>报警类型：</strong>
-                        <Tag color="red">{currentCamera.alertType}</Tag>
-                      </div>
+                      <>
+                        <div>
+                          <strong>报警类型：</strong>
+                          <Tag color="red">{currentCamera.alertType}</Tag>
+                        </div>
+                        <div>
+                          <strong>报警开始时间：</strong>
+                          {currentCamera.alertStartedAt
+                            ? dayjs(currentCamera.alertStartedAt).format('YYYY-MM-DD HH:mm:ss')
+                            : '--'}
+                        </div>
+                        <div>
+                          <strong>持续时长：</strong>
+                          <span style={{ color: '#ff4d4f', fontWeight: 500 }}>
+                            {formatDuration(currentCamera.alertStartedAt)}
+                          </span>
+                        </div>
+                      </>
                     )}
                   </div>
                 </Card>
@@ -363,31 +404,49 @@ export default function VideoMonitor() {
                   dataSource={cameraAlertLogs
                     .filter(l => l.cameraId === currentCamera.id)
                     .sort((a, b) => dayjs(b.acknowledgedAt).unix() - dayjs(a.acknowledgedAt).unix())}
-                  renderItem={log => (
-                    <List.Item>
-                      <List.Item.Meta
-                        avatar={<CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20 }} />}
-                        title={
-                          <Space>
-                            <span>{log.alertType}</span>
-                            <Tag color="green">已确认</Tag>
-                          </Space>
-                        }
-                        description={
-                          <div>
-                            <div style={{ fontSize: 12, color: '#666' }}>
-                              确认人：{log.acknowledgedBy} · {dayjs(log.acknowledgedAt).format('YYYY-MM-DD HH:mm:ss')}
-                            </div>
-                            {log.notes && (
-                              <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
-                                备注：{log.notes}
+                  renderItem={log => {
+                    const handleSeconds = dayjs(log.acknowledgedAt).diff(dayjs(log.alertStartedAt), 'second')
+                    const handleMins = Math.floor(handleSeconds / 60)
+                    const handleSecs = handleSeconds % 60
+                    return (
+                      <List.Item style={{ alignItems: 'flex-start' }}>
+                        <List.Item.Meta
+                          avatar={<CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20, marginTop: 4 }} />}
+                          title={
+                            <Space>
+                              <span>{log.alertType}</span>
+                              <Tag color="green">已确认</Tag>
+                              <Tag color="blue">响应 {handleMins}分{handleSecs}秒</Tag>
+                            </Space>
+                          }
+                          description={
+                            <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                              <div>
+                                <span style={{ color: '#666' }}>报警开始：</span>
+                                {dayjs(log.alertStartedAt).format('YYYY-MM-DD HH:mm:ss')}
                               </div>
-                            )}
-                          </div>
-                        }
-                      />
-                    </List.Item>
-                  )}
+                              <div>
+                                <span style={{ color: '#666' }}>确认时间：</span>
+                                {dayjs(log.acknowledgedAt).format('YYYY-MM-DD HH:mm:ss')}
+                              </div>
+                              <div>
+                                <span style={{ color: '#666' }}>确认人：</span>
+                                {log.acknowledgedBy}
+                              </div>
+                              {(log.notes || log.processingNotes) && (
+                                <div style={{ marginTop: 4, padding: '6px 10px', background: '#f6ffed', borderRadius: 4 }}>
+                                  <div style={{ color: '#52c41a', fontWeight: 500 }}>处理备注</div>
+                                  <div style={{ color: '#666' }}>
+                                    {log.processingNotes || log.notes}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          }
+                        />
+                      </List.Item>
+                    )
+                  }}
                 />
               )}
             </Card>

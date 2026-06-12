@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Card, Row, Col, Tag, Space, Button, Table, Modal, Form, Select, DatePicker,
-  message, List, Badge, Tooltip, Divider
+  message, List, Badge, Tooltip, Divider, Tabs, Statistic
 } from 'antd'
 import {
   CalendarOutlined, ReloadOutlined, EditOutlined, CheckOutlined, CloseOutlined,
-  WarningOutlined
+  WarningOutlined, TeamOutlined, ExclamationCircleOutlined, SafetyOutlined
 } from '@ant-design/icons'
 import { usePoliceStore } from '../store/policeStore'
 import { SHIFT_LABELS } from '../data/mockData'
@@ -32,6 +32,48 @@ export default function Schedule() {
   const [changeModal, setChangeModal] = useState(false)
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null)
   const [changeForm] = Form.useForm()
+  const [coverageDate, setCoverageDate] = useState<string>(dayjs().format('YYYY-MM-DD'))
+  const [activeTab, setActiveTab] = useState('schedule')
+
+  const coverageData = useMemo(() => {
+    const daySchedules = schedules.filter(s => s.date === coverageDate && s.changeStatus !== 'rejected')
+    const result: Record<string, Record<string, number>> = {}
+    areas.forEach(area => {
+      result[area.id] = { morning: 0, afternoon: 0, night: 0 }
+    })
+    daySchedules.forEach(s => {
+      if (result[s.areaId]) {
+        result[s.areaId][s.shift]++
+      }
+    })
+    return result
+  }, [schedules, coverageDate, areas])
+
+  const highRiskAreas = useMemo(() => areas.filter(a => a.riskLevel === 'high'), [areas])
+
+  const coverageStats = useMemo(() => {
+    let totalShifts = 0
+    let filledShifts = 0
+    let vacantShifts = 0
+    let highRiskVacant = 0
+
+    areas.forEach(area => {
+      ;(['morning', 'afternoon', 'night'] as const).forEach(shift => {
+        totalShifts++
+        const count = coverageData[area.id]?.[shift] || 0
+        if (count > 0) {
+          filledShifts++
+        } else {
+          vacantShifts++
+          if (area.riskLevel === 'high') {
+            highRiskVacant++
+          }
+        }
+      })
+    })
+
+    return { totalShifts, filledShifts, vacantShifts, highRiskVacant }
+  }, [coverageData, areas])
 
   const filteredSchedules = schedules.filter(s => {
     if (dateFilter && s.date !== dateFilter) return false
@@ -201,96 +243,245 @@ export default function Schedule() {
         </Card>
       )}
 
-      <Card
-        title="巡逻排班表"
-        extra={
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={handleGenerate}>
-              自动生成排班
-            </Button>
-            <Button type="primary" icon={<CalendarOutlined />}>
-              导出排班表
-            </Button>
-          </Space>
-        }
-      >
-        <Space style={{ marginBottom: 16 }} wrap>
-          <Select
-            placeholder="选择日期"
-            style={{ width: 180 }}
-            value={dateFilter}
-            onChange={setDateFilter}
-            allowClear
-          >
-            {dates.map(d => (
-              <Option key={d} value={d}>
-                {d} ({dayjs(d).format('dddd')})
-              </Option>
-            ))}
-          </Select>
-          <Select
-            placeholder="选择区域"
-            style={{ width: 160 }}
-            allowClear
-            value={areaFilter}
-            onChange={setAreaFilter}
-          >
-            {areas.map(a => (
-              <Option key={a.id} value={a.id}>
-                {a.name} (<Tag color={riskColor(a.riskLevel)} style={{ margin: 0 }}>{riskLabel(a.riskLevel)}</Tag>)
-              </Option>
-            ))}
-          </Select>
-          <Select
-            placeholder="选择班次"
-            style={{ width: 200 }}
-            allowClear
-            value={shiftFilter}
-            onChange={setShiftFilter}
-          >
-            <Option value="morning">{SHIFT_LABELS.morning}</Option>
-            <Option value="afternoon">{SHIFT_LABELS.afternoon}</Option>
-            <Option value="night">{SHIFT_LABELS.night}</Option>
-          </Select>
-        </Space>
-
-        <Table
-          columns={columns}
-          dataSource={filteredSchedules}
-          rowKey="id"
-          pagination={{ pageSize: 15, showSizeChanger: true }}
-          scroll={{ x: 1000 }}
-        />
-      </Card>
-
-      <Divider />
-
-      <Card title="辖区风险等级分布">
-        <Row gutter={[16, 16]}>
-          {areas.map(area => (
-            <Col xs={24} sm={12} md={8} key={area.id}>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          {
+            key: 'schedule',
+            label: <span><CalendarOutlined /> 巡逻排班表</span>,
+            children: (
               <Card
-                size="small"
-                style={{
-                  borderLeft: `4px solid ${area.riskLevel === 'high' ? '#ff4d4f' :
-                    area.riskLevel === 'medium' ? '#faad14' : '#52c41a'}`
-                }}
+                extra={
+                  <Space>
+                    <Button icon={<ReloadOutlined />} onClick={handleGenerate}>
+                      自动生成排班
+                    </Button>
+                    <Button type="primary" icon={<CalendarOutlined />}>
+                      导出排班表
+                    </Button>
+                  </Space>
+                }
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontWeight: 600, fontSize: 15 }}>{area.name}</span>
-                  <Tag color={riskColor(area.riskLevel)}>{riskLabel(area.riskLevel)}</Tag>
-                </div>
-                <div style={{ marginTop: 8, fontSize: 13, color: '#666' }}>
-                  犯罪率：{Math.round(area.crimeRate * 100)}%
-                </div>
-                <div style={{ marginTop: 4, fontSize: 12, color: '#999' }}>
-                  自动分配{riskLabel(area.riskLevel)}巡逻力量，高风险区域增加巡逻频次
-                </div>
+                <Space style={{ marginBottom: 16 }} wrap>
+                  <Select
+                    placeholder="选择日期"
+                    style={{ width: 180 }}
+                    value={dateFilter}
+                    onChange={setDateFilter}
+                    allowClear
+                  >
+                    {dates.map(d => (
+                      <Option key={d} value={d}>
+                        {d} ({dayjs(d).format('dddd')})
+                      </Option>
+                    ))}
+                  </Select>
+                  <Select
+                    placeholder="选择区域"
+                    style={{ width: 160 }}
+                    allowClear
+                    value={areaFilter}
+                    onChange={setAreaFilter}
+                  >
+                    {areas.map(a => (
+                      <Option key={a.id} value={a.id}>
+                        {a.name} (<Tag color={riskColor(a.riskLevel)} style={{ margin: 0 }}>{riskLabel(a.riskLevel)}</Tag>)
+                      </Option>
+                    ))}
+                  </Select>
+                  <Select
+                    placeholder="选择班次"
+                    style={{ width: 200 }}
+                    allowClear
+                    value={shiftFilter}
+                    onChange={setShiftFilter}
+                  >
+                    <Option value="morning">{SHIFT_LABELS.morning}</Option>
+                    <Option value="afternoon">{SHIFT_LABELS.afternoon}</Option>
+                    <Option value="night">{SHIFT_LABELS.night}</Option>
+                  </Select>
+                </Space>
+
+                <Table
+                  columns={columns}
+                  dataSource={filteredSchedules}
+                  rowKey="id"
+                  pagination={{ pageSize: 15, showSizeChanger: true }}
+                  scroll={{ x: 1000 }}
+                />
               </Card>
-            </Col>
-          ))}
-        </Row>
-      </Card>
+            )
+          },
+          {
+            key: 'coverage',
+            label: <span><TeamOutlined /> 警力覆盖视图</span>,
+            children: (
+              <>
+                <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                  <Col xs={12} md={6}>
+                    <Card>
+                      <Statistic
+                        title="总班次"
+                        value={coverageStats.totalShifts}
+                        prefix={<TeamOutlined />}
+                      />
+                    </Card>
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Card>
+                      <Statistic
+                        title="已覆盖班次"
+                        value={coverageStats.filledShifts}
+                        valueStyle={{ color: '#52c41a' }}
+                        prefix={<SafetyOutlined />}
+                      />
+                    </Card>
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Card>
+                      <Statistic
+                        title="空缺班次"
+                        value={coverageStats.vacantShifts}
+                        valueStyle={{ color: '#faad14' }}
+                        prefix={<ExclamationCircleOutlined />}
+                      />
+                    </Card>
+                  </Col>
+                  <Col xs={12} md={6}>
+                    <Card>
+                      <Statistic
+                        title="高风险空缺"
+                        value={coverageStats.highRiskVacant}
+                        valueStyle={{ color: '#ff4d4f' }}
+                        prefix={<WarningOutlined />}
+                      />
+                    </Card>
+                  </Col>
+                </Row>
+
+                <Card
+                  title="辖区警力覆盖详情"
+                  extra={
+                    <Select
+                      style={{ width: 180 }}
+                      value={coverageDate}
+                      onChange={setCoverageDate}
+                    >
+                      {dates.map(d => (
+                        <Option key={d} value={d}>
+                          {d} ({dayjs(d).format('dddd')})
+                        </Option>
+                      ))}
+                    </Select>
+                  }
+                >
+                  <Row gutter={[16, 16]}>
+                    {areas.map(area => {
+                      const data = coverageData[area.id] || { morning: 0, afternoon: 0, night: 0 }
+                      const hasVacant = data.morning === 0 || data.afternoon === 0 || data.night === 0
+                      const isHighRisk = area.riskLevel === 'high'
+                      return (
+                        <Col xs={24} sm={12} md={8} lg={6} key={area.id}>
+                          <Card
+                            size="small"
+                            style={{
+                              borderLeft: `4px solid ${isHighRisk ? '#ff4d4f' :
+                                area.riskLevel === 'medium' ? '#faad14' : '#52c41a'}`
+                            }}
+                          >
+                            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                              <span style={{ fontWeight: 600 }}>{area.name}</span>
+                              <Space size={4}>
+                                {isHighRisk && <Badge status="error" text="高风险" />}
+                                {hasVacant && <Badge status="warning" text="有空缺" />}
+                              </Space>
+                            </Space>
+                            <Divider style={{ margin: '8px 0' }} />
+                            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                                <span style={{ color: '#666' }}>早班</span>
+                                <span style={{
+                                  fontWeight: 500,
+                                  color: data.morning > 0 ? '#52c41a' : '#ff4d4f'
+                                }}>
+                                  {data.morning} 人 {data.morning === 0 && '⚠ 空缺'}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                                <span style={{ color: '#666' }}>中班</span>
+                                <span style={{
+                                  fontWeight: 500,
+                                  color: data.afternoon > 0 ? '#52c41a' : '#ff4d4f'
+                                }}>
+                                  {data.afternoon} 人 {data.afternoon === 0 && '⚠ 空缺'}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                                <span style={{ color: '#666' }}>晚班</span>
+                                <span style={{
+                                  fontWeight: 500,
+                                  color: data.night > 0 ? '#52c41a' : '#ff4d4f'
+                                }}>
+                                  {data.night} 人 {data.night === 0 && '⚠ 空缺'}
+                                </span>
+                              </div>
+                            </Space>
+                            <div style={{ marginTop: 8, fontSize: 11, color: '#999' }}>
+                              犯罪率：{Math.round(area.crimeRate * 100)}%
+                            </div>
+                          </Card>
+                        </Col>
+                      )
+                    })}
+                  </Row>
+                </Card>
+
+                <Divider />
+
+                <Card title="高风险辖区重点监控">
+                  <Row gutter={[16, 16]}>
+                    {highRiskAreas.map(area => {
+                      const data = coverageData[area.id] || { morning: 0, afternoon: 0, night: 0 }
+                      const allCovered = data.morning > 0 && data.afternoon > 0 && data.night > 0
+                      return (
+                        <Col xs={24} sm={12} key={area.id}>
+                          <Card
+                            size="small"
+                            style={{ borderColor: '#ff4d4f', background: '#fff1f0' }}
+                          >
+                            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                              <Space>
+                                <WarningOutlined style={{ color: '#ff4d4f', fontSize: 18 }} />
+                                <span style={{ fontWeight: 600, color: '#cf1322' }}>{area.name}</span>
+                              </Space>
+                              <Tag color={allCovered ? 'green' : 'red'}>
+                                {allCovered ? '全覆盖' : '有缺口'}
+                              </Tag>
+                            </Space>
+                            <div style={{ marginTop: 8, fontSize: 12 }}>
+                              <Space>
+                                <span>早班: {data.morning}人</span>
+                                <span>中班: {data.afternoon}人</span>
+                                <span>晚班: {data.night}人</span>
+                              </Space>
+                            </div>
+                            {!allCovered && (
+                              <div style={{ marginTop: 6, fontSize: 12, color: '#cf1322' }}>
+                                ⚠ 请及时补充高风险区域警力
+                              </div>
+                            )}
+                          </Card>
+                        </Col>
+                      )
+                    })}
+                  </Row>
+                </Card>
+              </>
+            )
+          }
+        ]}
+      />
 
       <Modal
         title="申请调班"

@@ -1,17 +1,20 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Card, Row, Col, Tag, Space, Button, Table, Modal, Form, Input, Select, DatePicker,
   message, Drawer, Descriptions, List, Upload, Steps, Progress, Divider, Alert, Tooltip
 } from 'antd'
 import {
   PlusOutlined, FolderOpenOutlined, FileTextOutlined, PaperClipOutlined,
-  EyeOutlined, EditOutlined, UploadOutlined, ExclamationCircleOutlined
+  EyeOutlined, EditOutlined, UploadOutlined, ExclamationCircleOutlined,
+  DownloadOutlined, FilterOutlined
 } from '@ant-design/icons'
 import { usePoliceStore } from '../store/policeStore'
 import { CASE_STATUS_LABELS } from '../data/mockData'
 import dayjs from 'dayjs'
 import type { ColumnsType } from 'antd/es/table'
-import type { Case, CaseStatus } from '../types'
+import type { Case, CaseStatus, Evidence, Transcript } from '../types'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -39,6 +42,7 @@ export default function CaseManagement() {
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null)
   const [transcriptFileList, setTranscriptFileList] = useState<any[]>([])
   const [evidenceFileList, setEvidenceFileList] = useState<any[]>([])
+  const [evidenceTypeFilter, setEvidenceTypeFilter] = useState<string>('all')
 
   const filteredCases = cases.filter(c => {
     if (statusFilter && c.status !== statusFilter) return false
@@ -49,6 +53,75 @@ export default function CaseManagement() {
     }
     return true
   })
+
+  const filteredEvidences = useMemo(() => {
+    if (!currentCase) return []
+    if (evidenceTypeFilter === 'all') return currentCase.evidences
+    return currentCase.evidences.filter(e => e.type === evidenceTypeFilter)
+  }, [currentCase, evidenceTypeFilter])
+
+  const getMaterialTypeLabel = (type: string, isTranscript: boolean) => {
+    if (isTranscript) return '笔录'
+    const map: Record<string, string> = {
+      image: '图片', video: '视频', audio: '音频',
+      document: '文档', physical: '物证'
+    }
+    return map[type] || type
+  }
+
+  const handleExportMaterialList = () => {
+    if (!currentCase) return
+
+    const doc = new jsPDF()
+    doc.setFontSize(16)
+    doc.text('案件材料清单', 105, 20, { align: 'center' })
+    doc.setFontSize(12)
+    doc.text(`案件编号：${currentCase.caseNumber}`, 14, 32)
+    doc.text(`案件名称：${currentCase.title}`, 14, 40)
+    doc.text(`导出时间：${dayjs().format('YYYY-MM-DD HH:mm:ss')}`, 14, 48)
+
+    const materials: Array<{
+      name: string
+      type: string
+      uploadTime: string
+      caseNumber: string
+    }> = []
+
+    currentCase.transcripts.forEach(t => {
+      materials.push({
+        name: t.fileName || t.title,
+        type: '笔录',
+        uploadTime: dayjs(t.uploadedAt).format('YYYY-MM-DD HH:mm'),
+        caseNumber: currentCase.caseNumber
+      })
+    })
+
+    currentCase.evidences.forEach(e => {
+      materials.push({
+        name: e.fileName || e.name,
+        type: getMaterialTypeLabel(e.type, false),
+        uploadTime: dayjs(e.uploadedAt).format('YYYY-MM-DD HH:mm'),
+        caseNumber: currentCase.caseNumber
+      })
+    })
+
+    autoTable(doc, {
+      startY: 58,
+      head: [['序号', '文件名称', '类型', '上传时间', '所属案件']],
+      body: materials.map((m, idx) => [
+        idx + 1,
+        m.name,
+        m.type,
+        m.uploadTime,
+        m.caseNumber
+      ]),
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [22, 119, 255] }
+    })
+
+    doc.save(`案件材料清单_${currentCase.caseNumber}_${dayjs().format('YYYYMMDDHHmmss')}.pdf`)
+    message.success('材料清单导出成功')
+  }
 
   const overdueCases = cases.filter(c => c.isOverdue)
 
@@ -321,6 +394,9 @@ export default function CaseManagement() {
         extra={
           currentCase && (
             <Space>
+              <Button icon={<DownloadOutlined />} onClick={handleExportMaterialList}>
+                导出材料清单
+              </Button>
               {currentCase.status === 'accepted' && (
                 <Button type="primary" onClick={() => handleUpdateStatus(currentCase.id, 'investigating')}>
                   开始侦查
@@ -457,7 +533,9 @@ export default function CaseManagement() {
                 <Space>
                   <PaperClipOutlined />
                   <span>证据材料</span>
-                  <Tag color="green">{currentCase.evidences.length} 件</Tag>
+                  <Tag color="green">
+                    {filteredEvidences.length} / {currentCase.evidences.length} 件
+                  </Tag>
                 </Space>
               }
               size="small"
@@ -467,11 +545,56 @@ export default function CaseManagement() {
                 </Button>
               }
             >
-              {currentCase.evidences.length === 0 ? (
+              <Space style={{ marginBottom: 12 }} wrap size={4}>
+                <span style={{ fontSize: 12, color: '#666' }}><FilterOutlined /> 类型筛选：</span>
+                <Tag
+                  color={evidenceTypeFilter === 'all' ? 'blue' : 'default'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEvidenceTypeFilter('all')}
+                >
+                  全部
+                </Tag>
+                <Tag
+                  color={evidenceTypeFilter === 'image' ? 'blue' : 'default'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEvidenceTypeFilter('image')}
+                >
+                  图片
+                </Tag>
+                <Tag
+                  color={evidenceTypeFilter === 'video' ? 'blue' : 'default'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEvidenceTypeFilter('video')}
+                >
+                  视频
+                </Tag>
+                <Tag
+                  color={evidenceTypeFilter === 'document' ? 'blue' : 'default'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEvidenceTypeFilter('document')}
+                >
+                  文档
+                </Tag>
+                <Tag
+                  color={evidenceTypeFilter === 'audio' ? 'blue' : 'default'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEvidenceTypeFilter('audio')}
+                >
+                  音频
+                </Tag>
+                <Tag
+                  color={evidenceTypeFilter === 'physical' ? 'blue' : 'default'}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => setEvidenceTypeFilter('physical')}
+                >
+                  物证
+                </Tag>
+              </Space>
+              {filteredEvidences.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: 24, color: '#999' }}>暂无证据材料</div>
               ) : (
                 <Row gutter={[12, 12]}>
-                  {currentCase.evidences.map(e => (
+                  {filteredEvidences.map(e => (
                     <Col xs={24} sm={12} key={e.id}>
                       <Card size="small" style={{ background: '#fafafa' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
